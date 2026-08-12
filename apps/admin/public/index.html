@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>baro memo · admin</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>baro memo <span>admin</span></h1>
+  <div class="conn">
+    <input id="admin-token" type="password" placeholder="관리자 토큰" autocomplete="off">
+    <span id="conn-state" class="dot" title="관리자 토큰 확인 상태"></span>
+  </div>
+</header>
+
+<main>
+  <section id="tokens">
+    <h2>토큰</h2>
+
+    <!-- 속성창: 발급 폼 + 선택된 토큰의 상세/액션. 리스트에는 액션을 두지 않는다. -->
+    <div class="panel">
+      <form id="issue-form">
+        <input id="issue-user" placeholder="사용자명" autocomplete="off" required>
+        <input id="issue-note" placeholder="메모 (선택)" autocomplete="off">
+        <button type="submit">발급</button>
+      </form>
+      <div id="token-detail" class="detail" hidden>
+        <code id="token-value"></code>
+        <button id="token-copy" type="button" title="토큰 값을 클립보드로">복사</button>
+        <button id="token-revoke" type="button" class="danger" title="즉시 무효화. 행은 남는다">폐기</button>
+      </div>
+    </div>
+
+    <table id="token-list">
+      <thead><tr><th>#</th><th>사용자</th><th>토큰</th><th>메모</th><th>발급</th><th>상태</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section id="memos">
+    <h2>보드</h2>
+
+    <!-- 속성창: 선택된 메모의 본문. 이 페이지는 보드를 읽기만 한다 — 쓰기는 에이전트의 일이다. -->
+    <div class="panel">
+      <pre id="memo-detail" hidden></pre>
+    </div>
+
+    <table id="memo-list">
+      <thead><tr><th>#</th><th>상태</th><th>user</th><th>author</th><th>제목</th><th>갱신</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+</main>
+
+<footer><span id="status"></span></footer>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "baro-memo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.1.0",
+  "scripts": {
+    "start": "node apps/backend/src/server.mjs",
+    "test": "node --test \"apps/**/*.test.mjs\"",
+    "migrate:calrory": "node scripts/migrate-from-calrory.mjs"
+  },
+  "workspaces": [
+    "apps/*"
+  ]
+}

@@ -1,0 +1,60 @@
+/* 관리 도구의 옷차림 — 시스템 폰트, 색은 상태 표시에만 쓴다. */
+:root {
+  --bg: #ffffff; --fg: #1a1d21; --muted: #6b7280; --line: #e5e7eb;
+  --panel: #f6f7f9; --accent: #2563eb; --danger: #b91c1c; --ok: #15803d;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111417; --fg: #e5e7eb; --muted: #9ca3af; --line: #2a2f36;
+    --panel: #1a1f24; --accent: #60a5fa; --danger: #f87171; --ok: #4ade80;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 system-ui, -apple-system, "Noto Sans KR", sans-serif;
+}
+header, main, footer { max-width: 960px; margin: 0 auto; padding: 0 16px; }
+header { display: flex; align-items: center; justify-content: space-between; padding-top: 20px; }
+h1 { font-size: 18px; margin: 0; }
+h1 span { color: var(--muted); font-weight: 400; }
+h2 { font-size: 14px; margin: 28px 0 8px; color: var(--muted); font-weight: 600; }
+
+.conn { display: flex; align-items: center; gap: 8px; }
+.conn input { width: 220px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--danger); }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
+.panel form { display: flex; gap: 8px; }
+.detail { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.detail code {
+  flex: 1; padding: 6px 8px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px; overflow-x: auto; white-space: nowrap;
+}
+
+input, button {
+  font: inherit; color: inherit; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px;
+}
+button { cursor: pointer; }
+button[type="submit"] { border-color: var(--accent); color: var(--accent); }
+button.danger { border-color: var(--danger); color: var(--danger); }
+
+table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--panel); }
+tbody tr.selected { background: var(--panel); outline: 1px solid var(--accent); }
+tbody tr.revoked { color: var(--muted); text-decoration: line-through; }
+td.mono { font-family: ui-monospace, monospace; font-size: 12px; }
+td .st { font-size: 12px; }
+.st.open { color: var(--accent); }
+.st.doing { color: var(--ok); }
+.st.done, .st.revoked { color: var(--muted); }
+.st.active { color: var(--ok); }
+
+#memo-detail { margin: 0; white-space: pre-wrap; font: 13px/1.5 ui-monospace, monospace; }
+footer { padding: 16px; color: var(--muted); font-size: 12px; }
