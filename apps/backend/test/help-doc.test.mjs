@@ -115,11 +115,12 @@ test("모든 라우트가 자기 주제 문서에 적혀 있다", async () => {
 
 test("주제 문서가 전부 존재하고 index 로 돌아가는 길이 있다", async () => {
   for (const topic of HELP_TOPICS) {
-    const res = await serveHelp({ topic, basePath: BASE });
+    const res = await serveHelp({ topic, basePath: BASE, origin: "http://board.test" });
     assert.equal(res.status, 200);
     assert.match(res.contentType, /^text\/markdown/);
     assert.ok(res.body.length > 200, `${topic} 문서가 비었습니다`);
     assert.ok(!res.body.includes("{{BASE}}"), "치환되지 않은 {{BASE}} 가 남았습니다");
+    assert.ok(!res.body.includes("{{ORIGIN}}"), "치환되지 않은 {{ORIGIN}} 이 남았습니다");
     assert.ok(res.body.includes(`${BASE}/api/`), "외부 URL 접두사가 문서에 반영되지 않았습니다");
     if (topic !== "index") {
       assert.ok(res.body.includes(`[index](${BASE}/api/help)`), `${topic} 에 index 로 가는 링크가 없습니다`);
@@ -192,6 +193,22 @@ test("format=json 은 라우트 인덱스를 준다 (경로에 base 가 붙는�
     assert.ok(r.summary?.trim(), `요약 누락: ${r.path}`);
   }
   assert.deepEqual(res.json.topics.map((t) => t.topic), HELP_TOPICS);
+});
+
+test("목록 라우트의 쿼리 힌트가 실제 파라미터와 어긋나지 않는다", async () => {
+  const route = AGENT_ROUTES.find((r) => r.method === "GET" && r.path === "/api/memos");
+  assert.ok(route.query, "목록 라우트에 쿼리 힌트가 없습니다");
+  // 힌트에 적힌 이름이 라우터가 실제로 받는 이름인지 — 문서만 아는 파라미터는 유령이다.
+  const src = await readFile(resolve(SRC, "memo/routes.mjs"), "utf8");
+  const allowed = src.match(/const LIST_PARAMS = new Set\(\[([^\]]*)\]\)/)[1]
+    .match(/"([a-z]+)"/g).map((s) => s.replaceAll('"', ""));
+  for (const name of new URLSearchParams(route.query).keys()) {
+    assert.ok(allowed.includes(name), `힌트에만 있는 쿼리 파라미터: ${name}`);
+  }
+  // 반대 방향 — 받는데 문서에 없는 것.
+  for (const name of allowed) {
+    assert.match(route.query, new RegExp(`[?&]${name}=`), `문서에서 빠진 쿼리 파라미터: ${name}`);
+  }
 });
 
 test("본문이 있는 라우트는 body 힌트를 싣는다 — GET 에는 없다", () => {

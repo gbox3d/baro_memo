@@ -14,7 +14,7 @@
 //
 // 반환 규약: 이 축의 경로가 아니면 null.
 import { json } from "../core/http.mjs";
-import { toMemoId } from "./memo-store.mjs";
+import { LIST_LIMIT, MEMO_STATUSES, toMemoId } from "./memo-store.mjs";
 
 // 헤더 두 곳: 전용 `x-memo-token` 과 표준 `Authorization: Bearer`. 도구 사정이다 — 일부
 // 클라이언트는 Authorization 을 자기 인증에 이미 쓴다.
@@ -32,10 +32,75 @@ function badRequest(error) {
   return json(400, { error: error.message, code: error.code || "invalid_memo", retryable: false });
 }
 
+function fail(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
+// ---- 목록 쿼리 ---------------------------------------------------------------------------
+//
+// 여기 없는 이름은 거절한다. 조용히 무시하면 `?staus=open` 이 보드 전체를 200 으로 돌려주고,
+// 소비자는 필터가 걸린 줄 안다 — 본문의 오타를 no_fields 로 거절하는 것과 같은 결이다.
+const LIST_PARAMS = new Set(["status", "q", "author", "user", "limit", "offset", "full"]);
+
+function asParams(query) {
+  return query instanceof URLSearchParams ? query : new URLSearchParams(query || "");
+}
+
+function intParam(params, name, fallback, min, max) {
+  const raw = params.get(name);
+  if (raw === null || raw.trim() === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min || n > max) {
+    throw fail("invalid_param", `${name} must be an integer in ${min}..${max}.`);
+  }
+  return n;
+}
+
+// `?full` 처럼 값 없이 쓰는 형태도 켜짐으로 받는다 — 손으로 치는 URL 에서 흔한 모양이다.
+function boolParam(params, name) {
+  const raw = params.get(name);
+  if (raw === null) return false;
+  const s = raw.trim().toLowerCase();
+  if (s === "" || s === "1" || s === "true") return true;
+  if (s === "0" || s === "false") return false;
+  throw fail("invalid_param", `${name} must be 1 or 0.`);
+}
+
+export function parseListQuery(query) {
+  const params = asParams(query);
+  for (const name of params.keys()) {
+    if (!LIST_PARAMS.has(name)) {
+      throw fail("unknown_param", `Unknown query parameter "${name}" — allowed: ${[...LIST_PARAMS].join(", ")}.`);
+    }
+  }
+
+  // 콤마 목록을 받는다. `?status=open,doing` 이 "지금 살아 있는 일" 이라는 가장 잦은 질문이다.
+  let status = null;
+  const rawStatus = (params.get("status") || "").trim();
+  if (rawStatus) {
+    status = rawStatus.split(",").map((s) => s.trim()).filter(Boolean);
+    for (const s of status) {
+      if (!MEMO_STATUSES.includes(s)) {
+        throw fail("invalid_status", `status must be one of ${MEMO_STATUSES.join(" · ")}.`);
+      }
+    }
+  }
+
+  return {
+    status,
+    q: (params.get("q") || "").trim(),
+    author: (params.get("author") || "").trim(),
+    user: (params.get("user") || "").trim(),
+    full: boolParam(params, "full"),
+    limit: intParam(params, "limit", LIST_LIMIT.default, 1, LIST_LIMIT.max),
+    offset: intParam(params, "offset", 0, 0, Number.MAX_SAFE_INTEGER),
+  };
+}
+
 export function createMemoRoutes(ctx) {
   const { memoStore, tokenStore } = ctx;
 
-  return async function handleMemo(method, pathname, body = {}, headers = {}) {
+  return async function handleMemo(method, pathname, query = null, body = {}, headers = {}) {
     if (pathname !== "/api/memos" && !pathname.startsWith("/api/memos/")) return null;
 
     let user = null;
@@ -61,9 +126,17 @@ export function createMemoRoutes(ctx) {
       }
     }
 
+    // 목록은 요약이다(전문은 `?full=1` 또는 id 한 건). count 는 이번에 실어 준 개수,
+    // total 은 필터를 통과한 전체 — 둘이 다르면 뒷장이 있다는 뜻이다.
     if (method === "GET" && pathname === "/api/memos") {
-      const memos = memoStore.list();
-      return json(200, { count: memos.length, memos });
+      try {
+        // 저장소도 던진다 — 검색어가 trigram 하한보다 짧으면 query_too_short.
+        const options = parseListQuery(query);
+        const { total, memos } = memoStore.list(options);
+        return json(200, {
+          count: memos.length, total, limit: options.limit, offset: options.offset, memos,
+        });
+      } catch (error) { return badRequest(error); }
     }
 
     if (method === "POST" && pathname === "/api/memos") {

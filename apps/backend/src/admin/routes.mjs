@@ -1,11 +1,11 @@
 // 관리 축 라우트: /api/admin/tokens*
 //
 // 이 축의 소비자는 에이전트가 아니라 **운영자**(관리자 페이지)다. 사용자 토큰이 아니라
-// .env 의 ADMIN_TOKEN 하나로 지킨다 — 사용자 토큰으로 토큰을 발급할 수 있으면 토큰을 가진
-// 누구나 신분을 늘릴 수 있어 추적이 무너진다.
+// 관리자 토큰 하나로 지킨다 — 사용자 토큰으로 토큰을 발급할 수 있으면 토큰을 가진
+// 누구나 신분을 늘릴 수 있어 추적이 무너진다. 그 토큰의 출처는 core/admin-token.mjs 가 정한다.
 //
 // 거절 구분은 memo 축과 같은 철학이다:
-//   503 admin_token_unset   — .env 에 ADMIN_TOKEN 이 없다. 운영자가 채우고 재시작해야 한다.
+//   503 admin_token_unset   — 관리자 토큰이 없다. 운영자가 채우고 재시작해야 한다.
 //   401 admin_token_invalid — 설정돼 있는데 네 것이 아니다.
 //
 // 반환 규약: 이 축의 경로가 아니면 null.
@@ -27,13 +27,14 @@ function badRequest(error) {
 export function createAdminRoutes(ctx) {
   const { tokenStore, adminToken = "" } = ctx;
 
-  return async function handleAdmin(method, pathname, body = {}, headers = {}) {
+  // query 는 이 축에서 쓰지 않는다 — 서명은 라우터 규약(server.mjs)이라 자리를 지킨다.
+  return async function handleAdmin(method, pathname, query = null, body = {}, headers = {}) {
     if (pathname !== "/api/admin/tokens" && !pathname.startsWith("/api/admin/tokens/")) return null;
 
     const expected = String(adminToken || "").trim();
     if (!expected) {
       return json(503, {
-        error: "No admin token on this deployment — set ADMIN_TOKEN in .env and restart.",
+        error: "No admin token on this deployment — set ADMIN_TOKEN_FILE (or ADMIN_TOKEN) in .env and restart.",
         code: "admin_token_unset", retryable: false,
       });
     }

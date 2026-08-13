@@ -19,6 +19,10 @@ export const HELP_TOPICS = ["index", "memo", "tokens"];
 // 외부 URL 접두사. 문서에는 `{{BASE}}` 로 적고 서빙 시각에 실제 값으로 치환한다 —
 // 마운트 경로(/memo 프록시 유무)가 바뀌어도 문서가 거짓말하지 않게.
 const BASE_TOKEN = "{{BASE}}";
+// 문서에 **실행 가능한 명령**을 적으려면 경로 접두사만으로는 모자란다(`curl /memo/install.sh`
+// 는 명령이 아니다). 요청의 Host 에서 절대 주소를 만들어 넣는다 — 이 서버는 자기가 밖에서
+// 무슨 이름으로 불리는지 그 헤더로만 안다(사내망 IP·터널 주소·localhost 가 다 맞다).
+const ORIGIN_TOKEN = "{{ORIGIN}}";
 
 // 이 서버가 여는 **전량**이다. 인덱스에 없는 기능은 에이전트에게 없는 기능이다.
 export const AGENT_ROUTES = Object.freeze([
@@ -30,7 +34,8 @@ export const AGENT_ROUTES = Object.freeze([
     summary: "Backend's own version" },
 
   { method: "GET", path: "/api/memos", topic: "memo",
-    summary: "The whole board, newest first — {count, memos}. No token" },
+    summary: "Summary index of the board, newest first — {count, total, limit, offset, memos}. No body, just bodyPreview/bodyLength; ?full=1 for real bodies. q is full-text over title+body (words are AND, 3 chars minimum, punctuation is literal) and adds a snippet to each hit. Other filters: status (comma list) · author (contains) · user (exact) · limit (≤200, default 50) · offset. No token",
+    query: "?status=open,doing&q=&author=&user=&limit=50&offset=0&full=0" },
   { method: "POST", path: "/api/memos", topic: "memo",
     summary: "Post to the board. Needs a user token; `user` is stamped from it",
     body: "{body, title?, status?, author?}" },
@@ -63,7 +68,7 @@ export function buildLiveState({ memoStore = null, tokenStore = null, adminConfi
 }
 
 /** `/api/help[/<topic>]` 한 요청. sendResult 가 그대로 받는 모양으로 돌려준다. */
-export async function serveHelp({ topic = "index", format = "markdown", live = null, basePath = "" } = {}) {
+export async function serveHelp({ topic = "index", format = "markdown", live = null, basePath = "", origin = "" } = {}) {
   if (!HELP_TOPICS.includes(topic)) {
     return {
       status: 404,
@@ -77,7 +82,9 @@ export async function serveHelp({ topic = "index", format = "markdown", live = n
   if (format === "json") {
     return { status: 200, contentType: "application/json", json: helpIndexJson({ basePath, live }) };
   }
-  let markdown = (await readFile(topicFile(topic), "utf8")).replaceAll(BASE_TOKEN, basePath);
+  let markdown = (await readFile(topicFile(topic), "utf8"))
+    .replaceAll(ORIGIN_TOKEN, origin)   // {{ORIGIN}}{{BASE}} 순서라 ORIGIN 을 먼저 치환한다
+    .replaceAll(BASE_TOKEN, basePath);
   // 라이브 블록은 index 에만 붙인다 — 주제 문서는 순수한 산문으로 두고, 상태는 한 곳에서만 본다.
   if (topic === "index" && live) markdown += renderLiveBlock(live);
   return { status: 200, contentType: "text/markdown; charset=utf-8", body: markdown };
@@ -96,6 +103,7 @@ export function helpIndexJson({ basePath = "", live = null } = {}) {
       path: `${basePath}${r.path}`,
       topic: r.topic,
       summary: r.summary,
+      ...(r.query ? { query: r.query } : {}),
       ...(r.body ? { body: r.body } : {}),
     })),
     live,

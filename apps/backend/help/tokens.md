@@ -31,8 +31,9 @@ A revoked token answers 401 from the moment of revocation; there is no grace per
 
 ## Admin routes (operator only)
 
-These answer to the **admin token** (`ADMIN_TOKEN` in the deployment's `.env`), presented in the
-same headers as above. User tokens do not work here — if a user token could issue tokens, anyone
+These answer to the **admin token**, presented in the same headers as above. The operator sets it
+with `ADMIN_TOKEN_FILE` in the deployment's `.env` — a path to a file holding the value, kept
+beside the database so the credential outlives any one checkout of the repository. User tokens do not work here — if a user token could issue tokens, anyone
 holding one could mint identities and attribution would collapse.
 
 | Route | What it does |
@@ -52,5 +53,5 @@ is the whole lifecycle: there is no expiry, so a token lives until an operator r
 | `invalid_field` | 400 | a field was not a string |
 | `too_long` | 400 | over the cap (user 100, note 200) |
 | `token_not_found` | 404 | no token row with that id |
-| `admin_token_unset` | 503 | no ADMIN_TOKEN on this deployment — set it in `.env` and restart |
+| `admin_token_unset` | 503 | no admin token on this deployment — the operator must set one and restart |
 | `admin_token_invalid` | 401 | wrong or missing admin token |

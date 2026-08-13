@@ -9,9 +9,15 @@ import { createAdminRoutes } from "../src/admin/routes.mjs";
 
 const ADMIN = "adm_s3cr3t";
 
+// 라우터 서명은 (method, pathname, query, body, headers) 다. 이 축은 쿼리를 쓰지 않으므로
+// 자리를 null 로 채워 두고 검사는 body·headers 만 본다.
 function rig({ adminToken = ADMIN } = {}) {
   const tokenStore = new TokenStore(openDb(":memory:"));
-  return { handle: createAdminRoutes({ tokenStore, adminToken }), tokenStore };
+  const router = createAdminRoutes({ tokenStore, adminToken });
+  return {
+    handle: (method, path, body = {}, headers = {}) => router(method, path, null, body, headers),
+    tokenStore,
+  };
 }
 
 const auth = { "x-memo-token": ADMIN };

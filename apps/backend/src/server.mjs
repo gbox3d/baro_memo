@@ -4,13 +4,16 @@
 // 토큰·DB 경로 셋뿐이고, 사용자 토큰 같은 살아 있는 데이터는 전부 SQLite 에 있다 — 파일 두
 // 벌이면 "어느 쪽이 정본인가"가 생긴다.
 //
-// 라우터 규약은 baro_calrory 와 같다: (method, pathname, body, headers) → {status, ...} | null.
-// null 이면 다음 라우터로 넘어가고, 끝까지 null 이면 종단 404 다.
+// 라우터 규약: (method, pathname, query, body, headers) → {status, ...} | null.
+// null 이면 다음 라우터로 넘어가고, 끝까지 null 이면 종단 404 다. `query` 는 URLSearchParams —
+// 예전에는 파싱해 놓고 help 에만 주었는데, 그래서 `/api/memos?status=open` 이 조용히 전체를
+// 돌려주고 있었다. 아래 handle() 과 같은 순서로 맞춰 둔다.
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { readAdminToken } from "./core/admin-token.mjs";
 import { openDb } from "./core/db.mjs";
 import { MemoStore } from "./memo/memo-store.mjs";
 import { TokenStore } from "./auth/token-store.mjs";
@@ -27,7 +30,7 @@ try { process.loadEnvFile(join(repoRoot, ".env")); } catch { /* .env 없음 — 
 
 const PORT = Number(process.env.PORT) || 9100;
 const HOST = process.env.HOST || "0.0.0.0";
-const ADMIN_TOKEN = (process.env.ADMIN_TOKEN || "").trim();
+const { token: ADMIN_TOKEN, source: ADMIN_SOURCE } = readAdminToken();
 const DB_PATH = process.env.MEMO_DB
   ? (isAbsolute(process.env.MEMO_DB) ? process.env.MEMO_DB : join(repoRoot, process.env.MEMO_DB))
   : join(repoRoot, "localfiles", "memo.db");
@@ -60,6 +63,9 @@ async function handle(method, pathname, query, body, headers) {
       format: query.get("format") || "markdown",
       live: buildLiveState({ memoStore, tokenStore, adminConfigured: !!ADMIN_TOKEN, version: pkg.version }),
       basePath: basePathOf(headers),
+      // 이 서버가 밖에서 무슨 이름으로 불리는지는 Host 헤더로만 안다. 문서의 명령줄에 쓰는
+      // 용도이고, 위조돼도 그 헤더를 보낸 쪽이 이미 그 페이지를 받아 간 쪽이다.
+      origin: headers.host ? `http://${headers.host}` : "",
     });
   }
 
@@ -71,7 +77,7 @@ async function handle(method, pathname, query, body, headers) {
   }
 
   for (const route of routers) {
-    const res = await route(method, pathname, body, headers);
+    const res = await route(method, pathname, query, body, headers);
     if (res) return res;
   }
   return json(404, { error: "No such route.", method, pathname, help: "/api/help" });
@@ -119,7 +125,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`[baro_memo] v${pkg.version} listening on ${HOST}:${PORT} · db=${DB_PATH} · admin=${ADMIN_TOKEN ? "configured" : "UNSET"}`);
+  // 관리자 토큰의 **출처**를 찍는다(값이 아니라 경로다). "고친 파일과 서버가 읽은 파일이
+  // 다르다"가 이 종류 설정에서 가장 흔한 사고다.
+  console.log(`[baro_memo] v${pkg.version} listening on ${HOST}:${PORT} · db=${DB_PATH} · admin=${ADMIN_TOKEN ? "configured" : "UNSET"} (${ADMIN_SOURCE})`);
 });
 
 for (const sig of ["SIGINT", "SIGTERM"]) {
