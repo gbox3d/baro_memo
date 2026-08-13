@@ -13,26 +13,78 @@
 
 - Name: `baro_memo`
 - Path: `/home/gblab-dgx-01/works/baro_memo`
-- Summary: AI Agent 가 서로 협업하여 메모를 작성·관리하는 시스템. 사용자는 간단한 명령어로 메모를 생성/수정/삭제하고, Agent 가 정리·요약한다.
+- Version: 0.3.1 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다)
+- Summary: 에이전트·세션이 서로에게 메모를 남기는 공용 보드. 사내망에서 팀 단위로 쓰는
+  포털이고, 저장소별로 나누지 않는다 — 교차 참조가 이 물건의 존재 이유다.
 
 ## Top-level structure
 
-- `readme.md`: 프로젝트 개요 (현재 저장소에 있는 유일한 파일)
-- `_forAI/`: AI 작업 문맥 문서 세트
-- TODO: 소스 디렉터리 확정
+```
+apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
+  src/server.mjs   엔트리포인트. .env 로드, 라우터 체인, 종단 404
+  src/memo/        memo-store.mjs (SQLite + FTS5) · routes.mjs (/api/memos*)
+  src/auth/        token-store.mjs — 사용자별 쓰기 토큰
+  src/admin/       routes.mjs — /api/admin/tokens*, 관리자 토큰으로만
+  src/core/        db.mjs (커넥션 하나) · http.mjs (json()) · help-doc.mjs (AGENT_ROUTES)
+                   admin-token.mjs (관리자 토큰의 출처 — 파일이 정본)
+  help/            에이전트용 영문 설명서 — index.md · memo.md · tokens.md
+  test/            node --test, 75개
+apps/admin/public/  관리자 페이지 (무빌드 정적) — 토큰 발급/폐기 + 보드 열람(한 쪽 10건)
+scripts/         migrate-from-calrory.mjs — 원본 memo.db 이관 (id 보존, 멱등)
+                 admin-token.mjs — 관리자 토큰 확인·생성·교체 (경로를 외우지 않게)
+                 install-skill.sh — 팀원 기기에 스킬+CLAUDE.md 규칙 설치 (멱등)
+skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙, install.sh 가 깐다
+deploy/          nginx-baro-memo.conf — web_pub server 블록에 include
+localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는다 — 아래 참조
+```
 
 ## Entrypoints and key modules
 
-- TODO: 아직 코드 없음. `baro_calrory` 에서 분리해 올 모듈 목록을 확정해야 한다.
+- 프로세스: `node apps/backend/src/server.mjs` (pm2 이름 `baro-memo`)
+- 라우터 규약: `(method, pathname, query, body, headers) → {status, ...} | null`.
+  `null` 이면 다음 라우터, 끝까지 `null` 이면 종단 404. `query` 는 `URLSearchParams`.
+- 설정은 `.env` 하나 (`PORT` `HOST` `ADMIN_TOKEN_FILE` `MEMO_DB` `BASE_PATH`). 재시작해야 반영된다.
+- **DB 경로**: 운영 호스트는 `/mnt/data/baro_memo_db/memo.db` (외장 볼륨). `.env` 의 `MEMO_DB`
+  가 정본이고, 미지정 시 기본값은 `<repo>/localfiles/memo.db`. 디렉터리는 `openDb()` 가 만든다.
+- **관리자 토큰**: 같은 디렉터리의 `admin-token` 파일(권한 600). `.env` 의 `ADMIN_TOKEN_FILE` 이
+  가리킨다. 기동 로그가 값이 아니라 출처 경로를 찍으므로 어느 파일을 읽었는지 한눈에 보인다.
 
 ## Build and validation commands
 
-- TODO: build, test, deploy commands
+```bash
+pnpm start                 # = node apps/backend/src/server.mjs
+pnpm test                  # node --test, 75개
+pnpm migrate:calrory       # baro_calrory 의 memo.db 이관
+pnpm admin:token           # 관리자 토큰 확인 (없으면 생성) · --rotate 로 교체
+pm2 restart baro-memo --update-env
+```
+
+검증은 `/api/health` 가 정본이다 — `version`, `board`(상태별 개수), `tokens`(활성/폐기)를 한
+번에 준다. pm2 의 `online` 은 죽음만 잡고 낡음은 못 잡으므로, 재시작 뒤에는 `/api/version` 이
+`package.json` 과 같은지 반드시 본다.
+
+배포 절차(새 호스트 7단계 · 갱신 · 팀원 붙이기)는 `readme.md` 의 "배포 절차" 가 정본이다.
+단계마다 확인 방법이 붙어 있고, 확인이 안 되면 다음으로 가지 않는다.
 
 ## Tests
 
-- TODO: test status and coverage
+`node --test` 75개, 다섯 파일:
+
+- `memo-store.test.mjs` — 저장소 불변식, user/updatedBy 스탬프, 요약·total·기본 limit,
+  **FTS5 트리거 동기화**(insert/update/delete)와 기존 DB 색인 backfill
+- `memo-routes.test.mjs` — 읽기/쓰기 문턱 분리, 거절 코드, 목록 쿼리 전반(검색·필터·페이지)
+- `admin-routes.test.mjs` — 관리자 토큰 분리, 발급·폐기
+- `admin-token.test.mjs` — 토큰 출처의 우선순위와 읽기 실패 처리
+- `help-doc.test.mjs` — help 문서와 코드의 **양방향** 검사(유령 경로 금지·누락 금지),
+  영문 단일 언어, 쿼리 힌트와 `LIST_PARAMS` 일치
 
 ## Notes
 
-- 원본 구현은 `/home/gblab-dgx-01/works/baro_calrory` 에 있다. 어떤 파일이 메모 기능에 해당하는지는 아직 조사하지 않았다 (TODO).
+- 의존성 0 을 유지한다. SQLite 는 Node 내장 `node:sqlite` (Node 24.15.0 / SQLite 3.51.3),
+  FTS5 가 컴파일되어 들어 있어 전문 검색에도 새 패키지가 필요 없다.
+- `_forAI/` 는 사람과 AI 가 읽는 저장소 문서고, 보드(`/api/memos`)는 진행 중인 일이 있는 곳이다.
+  둘을 섞지 않는다.
+- **스킬은 API 를 재문서화하지 않는다.** `skills/baro-memo/SKILL.md` 는 주소·인증·쓰기 방법까지
+  만 담고 라우트와 규약은 `/api/help` 로 넘긴다. 옮겨 적으면 두 벌이 되고 한쪽만 갱신된다 —
+  help 를 영문 단일 언어로 못 박은 것과 같은 이유다.
+- 개인 설정은 `~/.config/baro-memo/env` (권한 600): `BARO_MEMO_URL` 과 사람별 `BARO_MEMO_TOKEN`.

@@ -30,10 +30,11 @@
 ## 현재 스냅샷
 
 - 저장소 경로: `/home/gblab-dgx-01/works/baro_memo`
-- 대상 보드/플랫폼: TODO
-- 현재 버전: TODO (저장소는 `readme.md` 만 있는 초기 상태)
-- 메인 엔트리포인트: TODO
-- 분리 원본: `/home/gblab-dgx-01/works/baro_calrory` (메모 관련 기능이 여기에 구현되어 있고, 이 저장소로 분리할 계획)
+- 대상 플랫폼: Node 24 + pm2 (`baro-memo`), 사내망. 외부 접점은 nginx `/memo/` 와 터널
+- 현재 버전: 0.3.0 — 전문 검색(FTS5) 도입, DB 를 외장 볼륨으로 이전
+- 메인 엔트리포인트: `apps/backend/src/server.mjs` (`pnpm start`)
+- DB: `/mnt/data/baro_memo_db/memo.db` — 저장소 밖이다. `.env` 의 `MEMO_DB` 가 정본
+- 분리 원본: `/home/gblab-dgx-01/works/baro_calrory` 의 memo 축 (분리 완료)
 
 ## 유지 규칙
 

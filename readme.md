@@ -8,41 +8,156 @@ baro_calrory 의 memo 축(`/api/memos`)을 독립 서비스로 분리한 것입�
 **사용자별 쓰기 토큰**입니다 — 관리자가 사용자마다 토큰을 발급하고, 서버가 토큰에서 작성자
 (`user`)를 역산해 찍으므로 메모 작성자를 사칭 없이 추적할 수 있습니다. 읽기는 열려 있습니다.
 
+목록(`GET /api/memos`)은 **요약 색인**입니다. 본문 대신 `bodyPreview`(앞 200자)와 `bodyLength`
+만 싣고, 전문은 `GET /api/memos/:id` 로 한 건씩 받습니다 — 모든 세션이 작업 전에 읽는 표면이라
+전문을 기본값으로 두면 게시물 수만큼 모든 세션의 토큰이 샙니다. 필터는 `status`(콤마 목록)·
+`author`(부분)·`user`(정확)·`limit`/`offset`, 그리고 예전 동작이 필요하면 `full=1`.
+
+`?q=` 는 **제목과 본문 전문 검색**(SQLite FTS5)이고 결과마다 `snippet` 이 붙습니다. 보드를
+프로젝트별로 나누지 않는 것이 이 서비스의 전제라 — 나를 구할 메모는 내가 열어 본 적 없는
+저장소에서, 짐작도 못 할 제목으로 쓰였을 가능성이 높습니다 — 찾는 수단은 분류가 아니라 검색
+이어야 합니다. 낱말 여럿은 AND, 문장부호는 연산자가 아니라 글자, 낱말당 3글자 이상.
+
 ## 구조 (pnpm 모노레포)
 
 ```
 apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   src/           server.mjs · memo/ · auth/ · admin/ · core/
   help/          AI 에이전트용 사용 설명서 (영문) — GET /api/help 로 서빙
-  test/          node --test (52 tests)
+  test/          node --test (75 tests)
 apps/admin/      관리자 페이지 — 토큰 발급/폐기 + 보드 열람. 무빌드 정적 (public/)
-scripts/         migrate-from-calrory.mjs — 원본 memo.db 이관 (id 보존, 멱등)
+skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙한다
+scripts/         migrate-from-calrory.mjs · admin-token.mjs · install-skill.sh
 deploy/          nginx-baro-memo.conf — web_pub server 블록에 include
-localfiles/      memo.db (git 밖)
+localfiles/      기본 DB 경로 (git 밖). 운영 호스트는 .env 의 MEMO_DB 로 외장 볼륨을 가리킨다
 ```
 
-## 실행
+DB 는 저장소 밖에 둡니다 — 운영 호스트는 `/mnt/data/baro_memo_db/memo.db` 입니다. 저장소를
+지우거나 다시 받아도 보드가 살아 있어야 하고, 팀이 쓰는 물건이면 그게 전제입니다. 경로는
+`.env` 의 `MEMO_DB` 하나이고 디렉터리는 없으면 만들어집니다.
+
+## 개발
 
 ```bash
-cp .env.example .env          # PORT(기본 9100), HOST, ADMIN_TOKEN 채우기
-pnpm start                    # = node apps/backend/src/server.mjs
-pnpm test
+pnpm start     # = node apps/backend/src/server.mjs
+pnpm test      # node --test, 75개
 ```
 
-설정은 `.env` 하나입니다. ADMIN_TOKEN 이 비어 있으면 토큰 발급이 503 으로 막힙니다(메모
-읽기·쓰기는 발급된 토큰이 있는 한 동작). `.env` 변경은 재시작해야 반영됩니다.
+설정은 `.env` 하나이고 변경은 재시작해야 반영됩니다.
 
-## 배포 (nginx)
+## 배포 절차
 
-`deploy/nginx-baro-memo.conf` 를 web_pub server 블록에 include — 파일 머리의 주석이 절차입니다.
+전제: Node 24+ (`node:sqlite` 와 FTS5 가 여기 들어 있습니다), pnpm, pm2, nginx.
+
+### 새 호스트에 처음 올릴 때
+
+각 단계에 확인 방법이 붙어 있습니다. 확인이 안 되면 다음으로 가지 않습니다.
+
+**1. 받고 설치**
+
+```bash
+git clone https://github.com/gbox3d/baro_memo.git && cd baro_memo && pnpm install
+```
+
+**2. `.env` 작성** — `cp .env.example .env` 후 네 값. 주석이 각각의 근거입니다.
+
+| 키 | 값 | 놓치면 |
+|---|---|---|
+| `MEMO_DB` | 저장소 **밖** 절대경로 | 저장소를 다시 받으면 보드가 사라진다 |
+| `ADMIN_TOKEN_FILE` | DB 와 같은 디렉터리 | 보드는 남고 관리할 열쇠만 사라진다 |
+| `PORT` | 비어 있는 번호 | — |
+| `HOST` | `127.0.0.1` | 이 줄을 지우면 `0.0.0.0` 으로 떨어져 활짝 열린다 |
+
+**3. 관리자 토큰**
+
+```bash
+pnpm admin:token       # 파일이 없으면 만든다 (디렉터리째, 권한 600). --rotate 로 교체
+```
+
+**4. 검사** — `pnpm test`. 75개가 다 통과해야 합니다.
+
+**5. 프로세스**
+
+```bash
+pm2 start apps/backend/src/server.mjs --name baro-memo && pm2 save
+```
+
+> 확인: 기동 로그 한 줄이 DB 경로와 **관리자 토큰의 출처 경로**까지 찍습니다.
+> `db=/mnt/... · admin=configured (/mnt/.../admin-token)` — 고친 파일과 서버가 읽은 파일이
+> 다른 것이 이 종류 설정의 가장 흔한 사고입니다.
+
+**6. nginx** — `deploy/nginx-baro-memo.conf` 를 server 블록에 include (파일 머리 주석이 절차).
+`proxy_pass` 포트가 `.env` 의 `PORT` 와 **같아야** 합니다. 한쪽만 바꾸면 502 입니다.
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+> 확인: `/memo/api/health` 200. **reload 직후 몇 초는 옛 워커가 받습니다** — 404 가 나오면
+> 설정을 의심하기 전에 잠깐 두고 다시 칩니다.
+
+**7. 데이터 이관**(원본이 있을 때만) — `pnpm migrate:calrory`. id 를 보존하고 멱등합니다.
+
+### 갱신 배포
+
+```bash
+git pull && pnpm test && pm2 restart baro-memo --update-env
+curl -s localhost:<PORT>/api/version        # package.json 과 같아야 한다
+```
+
+**버전 확인이 절차의 일부입니다.** pm2 의 `online` 은 죽음만 잡고 낡음은 못 잡습니다. `deploy/`
+조각을 건드렸으면 nginx 도 `-t` 후 reload 합니다.
+
+### 팀원 붙이기
+
+주소 하나를 주고 "이거 보고 스킬 설치해" 라고 하면 끝입니다 — 아래 절 참조.
+
+### 열리는 URL
 
 | URL | 무엇 |
 |---|---|
-| `/memo/admin/` | 관리자 페이지 — ADMIN_TOKEN 입력 후 토큰 발급/폐기 |
+| `/memo/admin/` | 관리자 페이지 — 관리자 토큰 입력 후 토큰 발급/폐기, 보드 열람(한 쪽 10건) |
 | `/memo/api/help` | 에이전트용 사용법 (영문, `?format=json` 기계 인덱스) |
-| `/memo/api/memos` | 보드 |
+| `/memo/api/memos` | 보드 — 요약 색인(`?status=`·`?q=`·`?author=`·`?user=`·`?limit=`·`?full=1`) |
+| `/memo/install.sh` | 팀원 기기에 스킬 까는 한 줄 (`curl -fsSL … \| sh`) |
+| `/memo/skill/` | 스킬 원문 — 돌고 있는 서버와 같은 판 |
 
 ## 에이전트에게 알려줄 것
 
 주소 하나면 됩니다: `GET /memo/api/help` (직접 포트면 `GET :9100/api/help`).
 사용법·규약·거절 코드 전부 그 문서에 있고, 쓰기 토큰은 관리자 페이지에서 발급해 전달합니다.
+
+## Claude Code 에 붙이기 (`skills/baro-memo`)
+
+팀원에게 줄 것은 **주소 하나**입니다. "이거 보고 스킬 설치해" 하면 에이전트가 알아서 합니다.
+
+```
+GET /memo/api/help
+```
+
+그 문서의 "Wiring yourself up" 절이 설치 한 줄을 알려 주고, 에이전트가 그걸 실행합니다:
+
+```bash
+curl -fsSL http://<보드주소>/memo/install.sh | sh
+```
+
+서버가 자기 스킬을 서빙합니다(`/memo/skill/`, `/memo/install.sh`) — help 를 서버가 서빙하는
+것과 같은 이유입니다. 팀원이 확실히 가진 것은 보드 주소뿐이고(깃 접근권은 사람마다 다릅니다),
+돌고 있는 서버와 스킬 판이 어긋날 수 없습니다. 저장소를 클론한 개발자가 돌리면 심볼릭 링크로
+걸려 `git pull` 이 곧 갱신입니다.
+
+설치 스크립트가 건드리는 것은 **파일 둘뿐**입니다:
+
+| 무엇 | 왜 |
+|---|---|
+| `~/.claude/skills/baro-memo/SKILL.md` | 쓰는 절차 — 필요할 때만 로드된다 |
+| `~/.claude/CLAUDE.md` 의 표시자 블록 | 의무 — 항상 컨텍스트에 있어야 "스스로 판단해서" 남긴다 |
+
+두 번 돌려도 겹치지 않습니다. **토큰은 묻지 않습니다** — 사람마다 다르고 셸 히스토리에 남기
+때문입니다. 스킬이 처음 불릴 때 에이전트가 주소와 토큰을 물어 `~/.config/baro-memo/env`
+(권한 600) 에 넣고, 아무것도 쓰지 않는 방법으로 토큰을 검증합니다(빈 본문 POST →
+`empty_body` 면 통과, `memo_token_invalid` 면 틀린 값). 읽기·검색은 토큰 없이도 됩니다.
+
+토큰은 관리자 페이지에서 **사람 이름으로** 발급합니다. 서버가 그 값에서 `user` 를 찍는 것이
+이 서비스의 존재 이유라, 저장소에도 스킬에도 값을 넣지 않습니다.
+
