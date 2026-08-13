@@ -42,8 +42,14 @@
   <section id="memos">
     <h2>보드</h2>
 
-    <!-- 속성창: 선택된 메모의 본문. 이 페이지는 보드를 읽기만 한다 — 쓰기는 에이전트의 일이다. -->
+    <!-- 속성창: 선택된 메모의 본문과 쪽 넘김. 액션은 리스트 위에 둔다 — 리스트는 상태만 보인다.
+         이 페이지는 보드를 읽기만 한다 — 쓰기는 에이전트의 일이다. -->
     <div class="panel">
+      <div class="pager">
+        <button id="memo-prev" type="button" disabled>◀</button>
+        <span id="memo-range"></span>
+        <button id="memo-next" type="button" disabled>▶</button>
+      </div>
       <pre id="memo-detail" hidden></pre>
     </div>
 

@@ -5,7 +5,17 @@
 const API = new URL("../api/", location.href);
 
 const $ = (sel) => document.querySelector(sel);
-const state = { tokens: [], memos: [], selectedToken: null, selectedMemo: null };
+
+// 한 쪽에 열 건. 서버가 total 을 주므로 마지막 쪽인지 여기서 계산할 수 있다.
+const PAGE = 10;
+
+// bodies: 목록은 본문을 싣지 않는다(요약 색인이다). 펼친 메모의 전문만 id 로 받아 여기 담아
+// 둔다 — 같은 메모를 다시 펼칠 때 또 부르지 않게.
+const state = {
+  tokens: [], memos: [], bodies: new Map(),
+  offset: 0, total: 0,
+  selectedToken: null, selectedMemo: null,
+};
 
 // 관리자 토큰은 localStorage 에 둔다 — 이 페이지의 사용자는 운영자 한 사람이고,
 // 매 방문 재입력이 이 도구의 마찰 전부이기 때문이다.
@@ -131,20 +141,57 @@ function renderMemos() {
     return tr;
   }));
 
+  // 쪽 표시는 1-기반으로 사람 눈에 맞춘다. 빈 보드면 "0" 하나.
+  const first = state.total ? state.offset + 1 : 0;
+  $("#memo-range").textContent = state.total
+    ? `${first}–${state.offset + state.memos.length} / ${state.total}`
+    : "0";
+  $("#memo-prev").disabled = state.offset === 0;
+  $("#memo-next").disabled = state.offset + state.memos.length >= state.total;
+
   const detail = $("#memo-detail");
   const sel = state.memos.find((m) => m.id === state.selectedMemo);
   detail.hidden = !sel;
-  if (sel) detail.textContent = sel.body + (sel.updatedBy ? `\n\n— last write: ${sel.updatedBy}` : "");
+  if (!sel) return;
+  // 전문이 아직 없으면 미리보기로 자리를 채운다 — 빈 칸은 "본문이 없다"로 읽힌다.
+  const full = state.bodies.get(sel.id);
+  const text = full ?? `${sel.bodyPreview}${sel.bodyLength > sel.bodyPreview.length ? "…" : ""}`;
+  detail.textContent = text + (sel.updatedBy ? `\n\n— last write: ${sel.updatedBy}` : "");
 }
 
-function selectMemo(id) {
+async function selectMemo(id) {
   state.selectedMemo = state.selectedMemo === id ? null : id;
   renderMemos();
+  if (state.selectedMemo === null || state.bodies.has(id)) return;
+  try {
+    state.bodies.set(id, (await call(`memos/${id}`)).memo.body);
+    if (state.selectedMemo === id) renderMemos();
+  } catch (err) { sayError(err); }
 }
+
+function turnPage(delta) {
+  const next = state.offset + delta * PAGE;
+  if (next < 0 || next >= state.total) return;
+  state.offset = next;
+  loadMemos();
+}
+
+$("#memo-prev").addEventListener("click", () => turnPage(-1));
+$("#memo-next").addEventListener("click", () => turnPage(1));
 
 async function loadMemos() {
   try {
-    state.memos = (await call("memos")).memos;
+    // 새로고침은 캐시를 버린다 — 남겨 두면 남이 고친 본문을 옛날 것으로 보여 준다.
+    state.bodies.clear();
+    // 요약 색인 한 쪽만 받는다. 보드가 커져도 이 페이지가 무거워지지 않는다.
+    const page = await call(`memos?limit=${PAGE}&offset=${state.offset}`);
+    // 마지막 쪽에서 메모가 지워지면 offset 이 total 을 넘어 빈 화면이 된다 — 한 쪽 당겨 다시.
+    if (page.count === 0 && state.offset > 0) {
+      state.offset = Math.max(0, Math.floor((page.total - 1) / PAGE) * PAGE);
+      return loadMemos();
+    }
+    state.memos = page.memos;
+    state.total = page.total;
     renderMemos();
   } catch (err) { sayError(err); }
 }
@@ -158,7 +205,7 @@ function esc(s) {
 
 function sayError(err) {
   const hints = {
-    admin_token_unset: "서버 .env 에 ADMIN_TOKEN 이 없습니다.",
+    admin_token_unset: "서버에 관리자 토큰이 없습니다 (.env 의 ADMIN_TOKEN_FILE).",
     admin_token_invalid: "관리자 토큰이 틀립니다.",
   };
   say(hints[err.code] || `${err.status || ""} ${err.message}`.trim(), true);

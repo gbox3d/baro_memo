@@ -28,6 +28,12 @@ h2 { font-size: 14px; margin: 28px 0 8px; color: var(--muted); font-weight: 600;
 
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
 .panel form { display: flex; gap: 8px; }
+/* 쪽 넘김. 범위 표시가 가운데에서 흔들리지 않게 tabular-nums 로 자릿수를 고정한다. */
+.pager { display: flex; align-items: center; gap: 8px; }
+.pager button { padding: 4px 10px; line-height: 1; }
+.pager button:disabled { opacity: .35; cursor: default; }
+.pager span { color: var(--muted); font-variant-numeric: tabular-nums; }
+
 .detail { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .detail code {
   flex: 1; padding: 6px 8px; background: var(--bg); border: 1px solid var(--line);
@@ -56,5 +62,7 @@ td .st { font-size: 12px; }
 .st.done, .st.revoked { color: var(--muted); }
 .st.active { color: var(--ok); }
 
+/* 쪽 넘김 바로 아래에 붙으므로 열렸을 때만 사이를 띄운다(닫히면 :not 이 안 걸린다). */
 #memo-detail { margin: 0; white-space: pre-wrap; font: 13px/1.5 ui-monospace, monospace; }
+#memo-detail:not([hidden]) { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
 footer { padding: 16px; color: var(--muted); font-size: 12px; }
