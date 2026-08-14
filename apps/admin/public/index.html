@@ -39,6 +39,7 @@
       <div id="token-detail" class="detail" hidden>
         <code id="token-value"></code>
         <button id="token-copy" type="button" title="토큰 값을 클립보드로">복사</button>
+        <button id="token-invite" type="button" title="팀원에게 보낼 안내 메시지 (토큰 포함)">메시지</button>
         <button id="token-revoke" type="button" class="danger" title="즉시 무효화. 행은 남는다">폐기</button>
       </div>
     </div>
@@ -85,6 +86,19 @@
     <!-- 이 글에 무슨 일이 있었나. 사실만(언제·누가·무엇을) — 내용은 관리자 축에 있다. -->
     <section id="memo-history" hidden></section>
   </div>
+</dialog>
+
+<!-- 팀원에게 보낼 안내. 토큰이 들어 있으므로 화면에 띄우는 것까지가 이 페이지의 일이고,
+     보내는 것은 운영자가 자기 채널에서 한다. -->
+<dialog id="invite-dialog">
+  <header>
+    <span id="invite-title"></span>
+    <span>
+      <button id="invite-copy" type="button" title="메시지 전체를 클립보드로">복사</button>
+      <button id="invite-close" type="button" title="닫기 (Esc)">닫기</button>
+    </span>
+  </header>
+  <textarea id="invite-text" readonly spellcheck="false"></textarea>
 </dialog>
 
 <footer><span id="status"></span></footer>

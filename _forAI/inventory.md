@@ -32,9 +32,9 @@ apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   help/            에이전트용 영문 설명서 — index.md · memo.md · tokens.md
   test/            node --test, 105개
 apps/admin/      관리자 페이지 (무빌드 정적)
-  public/          index.html · app.js · style.css — 토큰 발급/폐기, 보드 열람(한 쪽 10건),
-                   본문 팝업(<dialog>), 표시 시간대 선택, 백엔드 판 표시
-  test/            dom-shim.mjs (node:vm + 최소 DOM) · admin-page.test.mjs — 25개
+  public/          index.html · app.js · style.css — 토큰 발급/폐기, 팀원용 안내 메시지 생성,
+                   보드 열람(한 쪽 10건), 본문·이력 팝업(<dialog>), 표시 시간대, 백엔드 판 표시
+  test/            dom-shim.mjs (node:vm + 최소 DOM) · admin-page.test.mjs — 29개
 scripts/         migrate-from-calrory.mjs — 원본 memo.db 이관 (id 보존, 멱등)
                  admin-token.mjs — 관리자 토큰 확인·생성·교체 (경로를 외우지 않게)
                  install-skill.sh — 팀원 기기에 스킬+CLAUDE.md 규칙 설치 (멱등)
@@ -58,7 +58,7 @@ localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는�
 
 ```bash
 pnpm start                 # = node apps/backend/src/server.mjs
-pnpm test                  # node --test, 130개 (백엔드 105 + 관리자 페이지 25)
+pnpm test                  # node --test, 134개 (백엔드 105 + 관리자 페이지 29)
 pnpm migrate:calrory       # baro_calrory 의 memo.db 이관
 pnpm admin:token           # 관리자 토큰 확인 (없으면 생성) · --rotate 로 교체
 pm2 restart baro-memo --update-env
@@ -73,7 +73,7 @@ pm2 restart baro-memo --update-env
 
 ## Tests
 
-`node --test` 130개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다.
+`node --test` 134개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다.
 
 백엔드 105개, 일곱 파일:
 
@@ -89,7 +89,7 @@ pm2 restart baro-memo --update-env
 - `help-doc.test.mjs` — help 문서와 코드의 **양방향** 검사(유령 경로 금지·누락 금지),
   영문 단일 언어, 쿼리 힌트와 `LIST_PARAMS` 일치
 
-관리자 페이지 25개, `apps/admin/test/`:
+관리자 페이지 29개, `apps/admin/test/`:
 
 - `dom-shim.mjs` — 브라우저가 없으므로 최소 DOM 을 심어 `app.js` 를 `node:vm` 에서 **그대로**
   실행한다. index.html 에서 정적 `<option>`·버튼 라벨을 읽어 오므로 HTML↔JS 계약도 같이 걸린다.

@@ -361,3 +361,70 @@ test("고른 토큰이 없으면 복사 버튼은 조용하다", async () => {
   assert.equal(page.execCopied.length + page.copied.length, 0);
   assert.equal(page.status(), "");
 });
+
+// ---- 팀원 초대 메시지 ---------------------------------------------------------------------
+//
+// 운영자가 하는 일은 "토큰을 발급해 사람에게 전달" 인데, 값만 던지면 받은 쪽은 그걸로 무엇을
+// 하는지 모른다. 이 메시지가 그 간격을 메운다 — 그래서 **무엇이 들어 있는가**가 검사할 값이다.
+
+async function invitePage() {
+  const page = await pickedPage({});
+  page.node("#token-invite")._on.click();
+  return page;
+}
+
+test("메시지에는 팀원이 실제로 필요한 것이 전부 들어 있다", async () => {
+  const page = await invitePage();
+  const text = page.node("#invite-text").value;
+
+  assert.equal(page.inviteDialog.open, true);
+  assert.ok(text.includes(TOKEN.token), "토큰이 없으면 이 메시지는 쓸모가 없다");
+  assert.ok(text.includes(TOKEN.user), "누구에게 보내는 것인지");
+  // 주소는 운영자가 지금 열어 본 주소에서 만든다(shim 의 location 은 board.test 다).
+  assert.ok(text.includes("http://board.test/memo/api/help"), "규약 정본의 주소");
+  assert.ok(text.includes("curl -fsSL http://board.test/memo/install.sh | sh"), "설치 한 줄");
+  // 관리자 페이지 주소는 넣지 않는다 — 받는 사람에게는 열리지 않는 문이고, 안내는 그 사람이
+  // 실제로 할 수 있는 것만 담아야 한다.
+  assert.equal(text.includes("/admin/"), false);
+  assert.match(page.node("#invite-title").textContent, /paimon/);
+});
+
+test("메시지가 AI 에게 시킬 말과 쓰는 법을 담는다 — 값만 던지지 않는다", async () => {
+  const { value: text } = (await invitePage()).node("#invite-text");
+  // 붙여 넣을 블록과, 왜 쓸 만한지가 같이 있어야 초대다.
+  for (const must of ["대화창에 그대로 붙여", "검색", "댓글", "done", "영어"]) {
+    assert.ok(text.includes(must), `안내에 "${must}" 대목이 없습니다`);
+  }
+  assert.ok(text.includes("공유 채널에 그대로 붙여 넣지 마세요"), "값이 사람마다 다르다는 주의");
+});
+
+test("메시지 복사는 평문 HTTP 에서도 되고, 막히면 그렇게 말한다", async () => {
+  const page = await invitePage();
+  await page.node("#invite-copy")._on.click();
+  assert.equal(page.execCopied.length, 1);
+  assert.ok(page.execCopied[0].includes(TOKEN.token));
+  assert.match(page.status(), /복사/);
+
+  const blocked = loadAdminPage({ adminToken: "adm_x", tokens: [TOKEN], clipboard: false, execCommand: false });
+  await blocked.settled;
+  blocked.pickTokenRow();
+  blocked.node("#token-invite")._on.click();
+  await blocked.node("#invite-copy")._on.click();
+  assert.deepEqual(blocked.selectedRanges, [blocked.node("#invite-text")], "손으로 긁을 수 있게 선택은 해 준다");
+  assert.match(blocked.status(), /직접 선택/);
+});
+
+test("닫기와 가림막으로 닫히고, 고른 토큰이 없으면 열리지 않는다", async () => {
+  const page = await invitePage();
+  page.node("#invite-close")._on.click();
+  assert.equal(page.inviteDialog.open, false);
+
+  page.node("#token-invite")._on.click();
+  page.inviteDialog._on.click({ target: page.inviteDialog });
+  assert.equal(page.inviteDialog.open, false);
+
+  const none = loadAdminPage({ adminToken: "adm_x", tokens: [TOKEN] });
+  await none.settled;
+  none.node("#token-invite")._on.click(); // 아무것도 고르지 않은 상태
+  assert.equal(none.inviteDialog.open, false);
+});

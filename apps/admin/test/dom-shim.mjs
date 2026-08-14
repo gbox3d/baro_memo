@@ -135,11 +135,16 @@ export function loadAdminPage({
   const selectedRanges = [];
   // <dialog> 는 open 속성이 화면을 지배한다(UA 규칙). showModal/close 를 흉내 내되,
   // close 이벤트까지 돌려줘야 "Esc 로 닫으면 선택이 풀린다" 를 검사할 수 있다.
-  const dialog = el("dialog");
-  dialog.open = false;
-  dialog.showModal = () => { dialog.open = true; };
-  dialog.close = () => { dialog.open = false; dialog._on.close?.(); };
-  nodes.set("#memo-dialog", dialog);
+  const makeDialog = (sel) => {
+    const d = el("dialog");
+    d.open = false;
+    d.showModal = () => { d.open = true; };
+    d.close = () => { d.open = false; d._on.close?.(); };
+    nodes.set(sel, d);
+    return d;
+  };
+  const dialog = makeDialog("#memo-dialog");
+  const inviteDialog = makeDialog("#invite-dialog");
   const document = {
     body,
     createElement: (tag) => el(tag),
@@ -193,7 +198,7 @@ export function loadAdminPage({
     // 리스트에서 한 줄 고르기 — 액션(복사·폐기)은 고른 뒤에만 의미가 있다.
     pickTokenRow: (i = 0) => sandbox.document.querySelector("#token-list tbody").children[i]._on.click(),
     pickMemoRow: (i = 0) => sandbox.document.querySelector("#memo-list tbody").children[i]._on.click(),
-    dialog,
+    dialog, inviteDialog,
   };
 }
 

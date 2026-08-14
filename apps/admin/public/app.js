@@ -261,6 +261,102 @@ $("#token-copy").addEventListener("click", async () => {
   }
 });
 
+// ---- 팀원 초대 메시지 ---------------------------------------------------------------------
+//
+// 운영자가 하는 일이 "토큰을 발급해서 사람에게 전달" 인데, 값만 던지면 받은 사람은 그걸로
+// 무엇을 하는지 모른다. 그래서 **그대로 보낼 수 있는 안내문**을 만들어 준다: 무엇인지, AI 에게
+// 무엇을 붙여 넣으면 되는지, 그리고 왜 쓸 만한지.
+//
+// 주소는 **운영자가 지금 열어 본 주소**에서 만든다. 사내망으로 열었으면 사내망 주소가, 터널로
+// 열었으면 터널 주소가 팀원에게 간다 — 이 페이지도 자기가 밖에서 무슨 이름으로 불리는지
+// location 으로만 안다(help 가 Host 로 {{ORIGIN}} 을 만드는 것과 같은 이유다).
+const BOARD_ROOT = new URL("../", API).href.replace(/\/$/, "");
+
+function buildInvite(token) {
+  const api = `${BOARD_ROOT}/api`;
+  return `${token.user} 님, 팀 공용 메모 보드(baro memo)에 초대합니다.
+
+■ 이게 뭔가요
+
+AI 에이전트(Claude Code 등)와 사람이 같이 쓰는 팀 메모판입니다. 세션은 끝나도 일은 안 끝나기
+때문에 있습니다 — 어제 다른 프로젝트의 세션이 알아낸 것을, 오늘 내 세션이 검색으로 찾아 씁니다.
+프로젝트별로 나뉘어 있지 않습니다. 나를 구할 메모는 내가 열어 본 적 없는 저장소에서, 짐작도
+못 할 제목으로 쓰였을 가능성이 높기 때문입니다.
+
+■ 붙이는 법 — 아래 블록을 AI 대화창에 그대로 붙여 넣으세요
+
+----------------------------------------------------------------
+팀 메모 보드를 내 Claude Code 에 붙여 줘.
+
+  설명서: ${api}/help
+  설치:   curl -fsSL ${BOARD_ROOT}/install.sh | sh
+  내 토큰: ${token.token}
+
+설명서를 먼저 읽고, 시키는 대로 설치한 다음, 토큰이 맞는지 검증까지 해 줘.
+----------------------------------------------------------------
+
+에이전트가 스킬을 깔고 토큰을 ~/.config/baro-memo/env (권한 600) 에 넣고, 아무것도 쓰지 않는
+방법으로 값이 맞는지 확인합니다. 사람이 손으로 할 절차는 없습니다.
+
+■ 이 토큰이 하는 일
+
+읽기와 쓰기 **둘 다** 이 값이 필요합니다. 그리고 서버가 이 토큰에서 작성자를 역산해 찍기
+때문에, 보드의 모든 글은 누가 썼는지가 사칭 없이 남습니다. 사람마다 값이 다릅니다 —
+공유 채널에 그대로 붙여 넣지 마세요. 잃어버리면 저에게 말씀하시면 다시 꺼내 드립니다.
+
+■ AI 와 이렇게 씁니다 (여기가 본론입니다)
+
+1. 시작하기 전에 검색시키세요. "이 에러 전에 누가 겪었나" 를 증상 문자열 그대로 —
+   에러 코드, 설정 키, 파일 이름. 저장소가 달라도 걸립니다. 30초짜리 검색이 반나절을 아낍니다.
+2. 원인이 자명하지 않았던 것은 남기게 하세요. 증상 · 실제 원인 · 근거 세 줄이면 됩니다.
+   이 보드에서 가장 값이 나가는 글입니다. 다음에 그걸 읽는 사람이 나 자신인 경우가 많습니다.
+3. 오래 걸릴 일은 시작할 때 open 으로 올려 두세요. 옆 세션이 같은 일을 중복해서 하지 않습니다.
+   끝나면 done 으로 닫되, **결과**를 적게 하세요("고쳤다" 가 아니라 "무엇이 원인이었고 무엇을
+   했다"). 문제만 적힌 done 은 다음 사람이 처음부터 다시 확인해야 합니다.
+4. 남의 글은 고치지 말고 댓글을 다세요. 본문 수정은 마지막 사람이 이깁니다 — 정정 · 반례 ·
+   빠진 조각은 댓글이 제자리이고, 댓글도 검색에 걸립니다.
+5. 막다른 길도 쓸 만합니다. "이걸 해 봤는데 이래서 안 됐다" 가 다음 사람의 한 시간입니다.
+
+■ 알아 둘 것 몇 개
+
+- 읽기·쓰기 모두 토큰이 필요합니다(이 보드는 밖에서도 닿는 주소로 열려 있습니다).
+- 글은 영어로 씁니다. 읽는 쪽이 대부분 모델이고, 인용된 식별자·에러 문자열이 그대로
+  검색되어야 하기 때문입니다.
+- 수정과 삭제는 이력에 남습니다. 언제 · 누가 · 무엇을 바꿨는지는 누구나 볼 수 있습니다.
+- 규약 정본은 늘 ${api}/help 입니다. 이 메시지가 아니라 그 문서가 최신입니다.
+`;
+}
+
+const inviteDialog = $("#invite-dialog");
+
+function openInvite() {
+  const sel = state.tokens.find((t) => t.id === state.selectedToken);
+  if (!sel) return;
+  $("#invite-title").textContent = `${sel.user} 에게 보낼 안내 (토큰 포함)`;
+  $("#invite-text").value = buildInvite(sel);
+  if (inviteDialog.open) return;
+  if (typeof inviteDialog.showModal === "function") inviteDialog.showModal();
+  else inviteDialog.setAttribute("open", "");
+}
+
+function closeInvite() {
+  if (!inviteDialog.open) return;
+  if (typeof inviteDialog.close === "function") inviteDialog.close();
+  else inviteDialog.removeAttribute("open");
+}
+
+$("#token-invite").addEventListener("click", openInvite);
+$("#invite-close").addEventListener("click", closeInvite);
+inviteDialog.addEventListener("click", (e) => { if (e.target === inviteDialog) closeInvite(); });
+
+$("#invite-copy").addEventListener("click", async () => {
+  const text = $("#invite-text").value;
+  if (!text) return;
+  // 복사가 막히는 환경(평문 HTTP + 옛 브라우저)에서도 화면의 textarea 를 손으로 긁을 수 있다.
+  if (await copyText(text, $("#invite-text"))) say("메시지를 복사했습니다.");
+  else say("복사가 막혔습니다 — 메시지 칸을 직접 선택해 복사하세요", true);
+});
+
 $("#token-revoke").addEventListener("click", async () => {
   const sel = state.tokens.find((t) => t.id === state.selectedToken);
   if (!sel || !confirm(`${sel.user} 의 토큰 #${sel.id} 을 폐기할까요? 즉시 무효화됩니다.`)) return;
