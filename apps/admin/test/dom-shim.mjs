@@ -14,12 +14,22 @@ import { runInNewContext } from "node:vm";
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 
+// 만들어진 textarea 를 전부 들고 있는다. 브라우저에서 선택은 문서에 하나뿐이라, execCommand 는
+// "지금 선택된 textarea" 를 복사한다 — 그게 body 밑이든 열린 <dialog> 안이든.
+const textareas = [];
+
 function el(tag = "div") {
   const e = {
     tagName: tag, children: [], attrs: {}, style: {}, _parent: null,
     textContent: "", innerHTML: "", value: "", label: "", title: "",
     hidden: false, className: "", disabled: false, _on: {}, _selected: false,
-    select() { e._selected = true; },
+    select() { for (const t of textareas) t._selected = false; e._selected = true; },
+    focus() { e._focused = true; },
+    // 모달 <dialog> 안에서는 바깥 요소가 inert 라, 복사 폴백이 어디에 붙는지가 실제로 갈린다.
+    closest(sel) {
+      for (let n = e; n; n = n._parent) if (n.tagName === sel) return n;
+      return null;
+    },
     removeChild(k) { e.children = e.children.filter((c) => c !== k); k._parent = null; return k; },
     // DOM 과 같게 **옮긴다**. 이걸 흉내 내지 않으면 optgroup 으로 묶는 코드가 여기서만
     // 항목을 두 배로 만들고, 검사는 없는 문제를 보게 된다.
@@ -36,6 +46,7 @@ function el(tag = "div") {
     querySelector() { return el(); },
     reset() {},
   };
+  if (tag === "textarea") textareas.push(e);
   return e;
 }
 
@@ -155,6 +166,11 @@ export function loadAdminPage({
   };
   const dialog = makeDialog("#memo-dialog");
   const inviteDialog = makeDialog("#invite-dialog");
+  // 메시지 칸은 팝업 **안**에 있다. 이 부모 관계가 없으면 복사 폴백이 어디에 붙는지를
+  // 검사가 못 본다(그 자리가 정확히 이번에 깨졌던 곳이다).
+  const inviteText = el("textarea");
+  inviteDialog.appendChild(inviteText);
+  nodes.set("#invite-text", inviteText);
   const document = {
     body,
     createElement: (tag) => el(tag),
@@ -171,11 +187,27 @@ export function loadAdminPage({
   if (execCommand) {
     document.execCommand = (cmd) => {
       if (cmd !== "copy") return false;
-      const ta = body.children.find((c) => c.tagName === "textarea" && c._selected);
+      // 브라우저와 같게: **문서에 붙어 있고 선택된** textarea 를 복사한다. 열린 모달 밖에
+      // 붙은 것은 inert 라 선택될 수 없다 — 그 성질이 이 검사의 주제다.
+      const ta = textareas.find((t) => t._selected && attached(t) && !inertFor(t));
       if (!ta) return false;
       execCopied.push(ta.value);
       return true;
     };
+  }
+
+  // 문서에 붙어 있는가(body 나 열린 dialog 아래에 있는가).
+  function attached(node) {
+    for (let n = node; n; n = n._parent) if (n === body || n.tagName === "dialog") return true;
+    return false;
+  }
+
+  // 모달이 열려 있으면 그 팝업 밖의 요소는 못 만진다.
+  function inertFor(node) {
+    const openDialog = [dialog, inviteDialog].find((d) => d.open);
+    if (!openDialog) return false;
+    for (let n = node; n; n = n._parent) if (n === openDialog) return false;
+    return true;
   }
 
   const sandbox = {

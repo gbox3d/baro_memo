@@ -473,6 +473,46 @@ test("메시지 복사는 평문 HTTP 에서도 되고, 막히면 그렇게 말�
   assert.match(blocked.status(), /직접 선택/);
 });
 
+test("팝업이 열려 있어도 복사가 된다 — 모달 밖에 붙인 임시 칸은 못 만진다", async () => {
+  // showModal 뒤에는 팝업 바깥이 inert 다. body 에 임시 textarea 를 붙이는 폴백은 여기서
+  // 조용히 실패했다. 이제 값이 든 칸(메시지 칸)을 직접 선택해 복사한다.
+  const page = await invitePage();
+  assert.equal(page.inviteDialog.open, true, "모달이 열린 상태여야 이 검사가 의미 있다");
+
+  await page.node("#invite-copy")._on.click();
+  assert.equal(page.execCopied.length, 1);
+  assert.ok(page.execCopied[0].includes(TOKEN.token));
+  assert.equal(page.body.children.filter((c) => c.tagName === "textarea").length, 0,
+    "임시 칸을 body 에 남기지 않는다");
+});
+
+test("복사 확인이 팝업 안에서 보인다 — 상태줄은 팝업 뒤에 가린다", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const page = loadAdminPage({ adminToken: "adm_x", tokens: [TOKEN] });
+  await page.settled;
+  page.pickTokenRow();
+  page.node("#token-invite")._on.click();
+
+  const btn = page.node("#invite-copy");
+  assert.equal(btn.textContent, "복사");
+  await btn._on.click();
+  assert.equal(btn.textContent, "복사됨");
+  t.mock.timers.tick(1500);
+  assert.equal(btn.textContent, "복사", "라벨이 굳으면 다음 복사가 됐는지 알 수 없다");
+});
+
+test("팝업 복사가 막히면 버튼이 그렇게 말하고 값은 선택해 준다", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const page = loadAdminPage({ adminToken: "adm_x", tokens: [TOKEN], clipboard: false, execCommand: false });
+  await page.settled;
+  page.pickTokenRow();
+  page.node("#token-invite")._on.click();
+
+  await page.node("#invite-copy")._on.click();
+  assert.equal(page.node("#invite-copy").textContent, "복사 실패");
+  assert.deepEqual(page.selectedRanges, [page.node("#invite-text")]);
+});
+
 test("닫기와 가림막으로 닫히고, 고른 토큰이 없으면 열리지 않는다", async () => {
   const page = await invitePage();
   page.node("#invite-close")._on.click();

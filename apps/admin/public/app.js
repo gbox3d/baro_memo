@@ -214,17 +214,30 @@ async function copyText(text, node) {
     }
   } catch { /* 권한 거부·포커스 없음 — 아래로 내려간다 */ }
 
+  // 대상이 이미 값을 든 칸(textarea/input)이면 **그것을 직접** 선택해 복사한다. 임시 요소를
+  // 만들 이유가 없고, 무엇보다 모달 <dialog> 안에서는 바깥에 붙인 요소가 inert 라 선택되지
+  // 않는다 — 그래서 팝업의 복사가 조용히 실패했다.
   try {
-    // 폐기된 API 지만 평문 HTTP 에서 도는 유일한 길이다.
+    if (node && typeof node.select === "function" && "value" in node) {
+      node.focus?.();
+      node.select();
+      if (typeof document.execCommand === "function" && document.execCommand("copy")) return true;
+    }
+  } catch { /* 아래로 */ }
+
+  try {
+    // 폐기된 API 지만 평문 HTTP 에서 도는 유일한 길이다. 붙이는 자리는 **열려 있는 팝업 안**이다
+    // (모달 바깥은 inert 다). 팝업이 없으면 body.
+    const host = (node && typeof node.closest === "function" && node.closest("dialog")) || document.body;
     const ta = document.createElement("textarea");
     ta.value = text;
     ta.setAttribute("readonly", "");
     ta.style.position = "fixed"; // 화면이 튀지 않게
     ta.style.opacity = "0";
-    document.body.appendChild(ta);
+    host.appendChild(ta);
     ta.select();
     const ok = typeof document.execCommand === "function" && document.execCommand("copy");
-    document.body.removeChild(ta);
+    host.removeChild(ta);
     if (ok) return true;
   } catch { /* 아래로 */ }
 
@@ -240,14 +253,24 @@ async function copyText(text, node) {
 
 // 확인은 **누른 자리**에 남긴다. 상태줄은 화면 맨 아래라 휴대폰에서는 누른 손가락 밖이고,
 // 클립보드는 결과가 눈에 안 보이는 동작이다 — 확인이 없으면 됐는지 아닌지 알 길이 없다.
-const COPY_LABEL = $("#token-copy").textContent;
-let copyTimer = null;
+// 버튼마다 원래 라벨과 타이머를 따로 들고 있는다. 연타해도 라벨이 굳지 않게(타이머가 겹치면
+// 두 번째 확인이 첫 타이머에 지워진다).
+const flashState = new Map();
+
+function flashButton(selector, label) {
+  const btn = $(selector);
+  const known = flashState.get(selector);
+  const original = known ? known.original : btn.textContent;
+  if (known) clearTimeout(known.timer);
+  btn.textContent = label;
+  flashState.set(selector, {
+    original,
+    timer: setTimeout(() => { btn.textContent = original; }, 1500),
+  });
+}
 
 function flashCopy(label) {
-  const btn = $("#token-copy");
-  clearTimeout(copyTimer); // 연타해도 원래 라벨로 돌아온다(타이머가 겹치면 라벨이 굳는다)
-  btn.textContent = label;
-  copyTimer = setTimeout(() => { btn.textContent = COPY_LABEL; }, 1500);
+  flashButton("#token-copy", label);
 }
 
 $("#token-copy").addEventListener("click", async () => {
@@ -454,8 +477,14 @@ $("#invite-copy").addEventListener("click", async () => {
   const text = inviteText.value;
   if (!text) return;
   // 복사가 막히는 환경(평문 HTTP + 옛 브라우저)에서도 화면의 textarea 를 손으로 긁을 수 있다.
-  if (await copyText(text, inviteText)) say("메시지를 복사했습니다.");
-  else say("복사가 막혔습니다 — 메시지 칸을 직접 선택해 복사하세요", true);
+  // 확인은 **팝업 안에서** 보여야 한다. 상태줄은 팝업 뒤에 가려 아무것도 안 보인다.
+  if (await copyText(text, inviteText)) {
+    flashButton("#invite-copy", "복사됨");
+    say("메시지를 복사했습니다.");
+  } else {
+    flashButton("#invite-copy", "복사 실패");
+    say("복사가 막혔습니다 — 메시지 칸을 직접 선택해 복사하세요", true);
+  }
 });
 
 $("#token-revoke").addEventListener("click", async () => {
