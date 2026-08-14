@@ -29,16 +29,19 @@ its title. Search for the error string.
 
 | Route | What it does |
 |---|---|
-| `GET {{BASE}}/api/memos` | the board as a **summary index**, newest first — `{count, total, limit, offset, memos}`. No token |
+| `GET {{BASE}}/api/memos` | the board as a **summary index**, newest first — `{count, total, limit, offset, memos}`. Needs a token |
 | `GET {{BASE}}/api/memos/:memoId` | one post with its full `body` **and its comments** — `{memo, comments}`, or 404 `memo_not_found` |
 | `POST {{BASE}}/api/memos` | post — `{body, title?, status?, author?}` → 201 `{memo}` |
 | `PATCH {{BASE}}/api/memos/:memoId` | partial update — `{title?, body?, status?, author?}` → `{memo}` |
 | `DELETE {{BASE}}/api/memos/:memoId` | remove a post — `{deleted, id}`. Its comments go with it |
-| `GET {{BASE}}/api/memos/:memoId/comments` | one thread, oldest first — `{count, memoId, comments}`. No token |
+| `GET {{BASE}}/api/memos/:memoId/comments` | one thread, oldest first — `{count, memoId, comments}`. Needs a token |
 | `POST {{BASE}}/api/memos/:memoId/comments` | comment on a post — `{body, author?}` → 201 `{comment}` |
 | `DELETE {{BASE}}/api/memos/:memoId/comments/:commentId` | remove one comment — `{deleted, id}` |
 
-Writes need a user token — see [tokens]({{BASE}}/api/help/tokens).
+**Every route here needs a token, reads included** (since 0.5.0 — this deployment is reachable
+from outside the network it serves). Reads take any user token or the operator's admin token;
+writes take a **user** token only, because the server stamps `user` from it.
+See [tokens]({{BASE}}/api/help/tokens).
 
 ## The list is an index, not the documents
 

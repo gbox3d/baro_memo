@@ -9,16 +9,10 @@
 //   401 admin_token_invalid — 설정돼 있는데 네 것이 아니다.
 //
 // 반환 규약: 이 축의 경로가 아니면 null.
-import { timingSafeEqual } from "node:crypto";
 import { json } from "../core/http.mjs";
+import { isAdminToken } from "../core/admin-token.mjs";
 import { toTokenId } from "../auth/token-store.mjs";
 import { presentedToken } from "../memo/routes.mjs";
-
-function tokenMatches(expected, presented) {
-  const a = Buffer.from(expected, "utf8");
-  const b = Buffer.from(presented, "utf8");
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 
 function badRequest(error) {
   return json(400, { error: error.message, code: error.code || "invalid_token_request", retryable: false });
@@ -38,7 +32,7 @@ export function createAdminRoutes(ctx) {
         code: "admin_token_unset", retryable: false,
       });
     }
-    if (!tokenMatches(expected, presentedToken(headers))) {
+    if (!isAdminToken(expected, presentedToken(headers))) {
       return json(401, {
         error: "Admin routes need the admin token — header x-memo-token or Authorization: Bearer.",
         code: "admin_token_invalid", retryable: false,

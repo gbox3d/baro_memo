@@ -436,6 +436,9 @@ function sayError(err) {
   const hints = {
     admin_token_unset: "서버에 관리자 토큰이 없습니다 (.env 의 ADMIN_TOKEN_FILE).",
     admin_token_invalid: "관리자 토큰이 틀립니다.",
+    // 0.5.0 부터 보드 읽기에도 토큰이 필요하다. 이 페이지는 관리자 토큰으로 읽는다.
+    memo_token_invalid: "보드를 읽으려면 토큰이 필요합니다 — 위 칸에 관리자 토큰을 넣으세요.",
+    no_tokens_issued: "이 배포에 발급된 토큰이 0개입니다 — 하나 발급하면 보드가 열립니다.",
   };
   say(hints[err.code] || `${err.status || ""} ${err.message}`.trim(), true);
 }

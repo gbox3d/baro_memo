@@ -1,9 +1,11 @@
 // 메모 축 라우트: /api/memos*
 //
-// 문턱이 둘로 갈린다 — 이 서비스의 계약 그 자체다.
-//   읽기: 열려 있다. "접수함을 보는 데까지 비밀을 요구하면 접수함이 아니다" (원본의 의도 유지).
-//   쓰기: 사용자 토큰. 토큰에서 사용자를 역산해 `user`(생성)·`updatedBy`(갱신)에 찍는다 —
-//         작성자 추적이 이 서비스를 baro_calrory 에서 분리한 이유다.
+// 문턱은 하나이고, 그 위에 사람 확인이 하나 더 붙는다 (0.5.0 에서 읽기가 닫혔다).
+//   읽기: 토큰이 필요하다. 사람 토큰이거나 관리자 토큰. 이 보드는 밖에서 닿는 주소로 열려 있고
+//         게시물에는 경로·식별자·실패 사례가 그대로 들어 있다.
+//   쓰기: **사람** 토큰만. 토큰에서 사용자를 역산해 `user`(생성)·`updatedBy`(갱신)에 찍는다 —
+//         작성자 추적이 이 서비스를 baro_calrory 에서 분리한 이유다. 관리자 토큰에는 사람이
+//         없어서 찍을 값이 없다(403 admin_token_cannot_write).
 //
 // 그래서 본문의 `user` 는 받지 않는다. 조용히 무시하면 소비자는 자기가 보낸 값이 저장된 줄
 // 안다 — 400 으로 정확히 거절한다(빈 PATCH 를 no_fields 로 거절하는 것과 같은 결).
@@ -16,6 +18,7 @@
 import { json } from "../core/http.mjs";
 import { LIST_LIMIT, MEMO_STATUSES, toMemoId } from "./memo-store.mjs";
 import { toCommentId } from "./comment-store.mjs";
+import { isAdminToken } from "../core/admin-token.mjs";
 
 // 헤더 두 곳: 전용 `x-memo-token` 과 표준 `Authorization: Bearer`. 도구 사정이다 — 일부
 // 클라이언트는 Authorization 을 자기 인증에 이미 쓴다.
@@ -99,24 +102,38 @@ export function parseListQuery(query) {
 }
 
 export function createMemoRoutes(ctx) {
-  const { memoStore, tokenStore, commentStore } = ctx;
+  const { memoStore, tokenStore, commentStore, adminToken = "" } = ctx;
 
   return async function handleMemo(method, pathname, query = null, body = {}, headers = {}) {
     if (pathname !== "/api/memos" && !pathname.startsWith("/api/memos/")) return null;
 
-    let user = null;
-    if (method !== "GET") {
+    const presented = presentedToken(headers);
+    // 관리자 토큰은 **읽기까지**다. 쓰기로 인정하지 않는 이유: 그 값에는 사람이 없어서 user 를
+    // 찍을 수 없고, 운영자는 자기 사람 토큰을 스스로 발급할 수 있다.
+    const operator = isAdminToken(adminToken, presented);
+    let user = tokenStore.userFor(presented);
+
+    // 읽기도 토큰이 필요하다. 이 보드는 밖에서 닿는 주소로 열려 있고, 게시물에는 경로·식별자·
+    // 실패 사례가 그대로 들어 있다. 문턱은 하나이고, 쓰기는 그 위에 사람 확인이 더 붙는다.
+    if (user === null && !operator) {
       if (tokenStore.counts().active === 0) {
         return json(503, {
-          error: "No write tokens have been issued on this deployment — ask the operator (admin page → issue a token).",
+          error: "No tokens have been issued on this deployment — ask the operator (admin page → issue a token).",
           code: "no_tokens_issued", retryable: false,
         });
       }
-      user = tokenStore.userFor(presentedToken(headers));
+      return json(401, {
+        error: "The board needs a token, for reads as well as writes — header x-memo-token or Authorization: Bearer. Ask the operator for one.",
+        code: "memo_token_invalid", retryable: false,
+      });
+    }
+
+    if (method !== "GET") {
+      // 여기서 걸리는 것은 관리자 토큰 하나뿐이다(사람 토큰은 이미 위를 통과했다).
       if (user === null) {
-        return json(401, {
-          error: "Writes need a user token — header x-memo-token or Authorization: Bearer.",
-          code: "memo_token_invalid", retryable: false,
+        return json(403, {
+          error: "The admin token can read the board but not write to it — issue yourself a user token; `user` is stamped from it.",
+          code: "admin_token_cannot_write", retryable: false,
         });
       }
       if (body && body.user !== undefined) {

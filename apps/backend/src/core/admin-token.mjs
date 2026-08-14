@@ -9,6 +9,21 @@
 // 전부다.** 파일을 못 읽었다고 ADMIN_TOKEN 으로 몰래 내려가지 않는다 — 그러면 운영자는
 // 자기가 방금 고친 파일이 아니라 잊고 있던 환경변수로 인증되는 상황을 만난다.
 import { readFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
+
+/**
+ * 제시된 값이 관리자 토큰인가. 길이가 다르면 timingSafeEqual 이 던지므로 먼저 거른다.
+ * 미설정(expected 가 "")은 언제나 false — 빈 토큰으로 통과하는 문은 만들지 않는다.
+ *
+ * 관리 라우트와 **읽기 문턱** 두 곳이 쓴다: 운영자는 사람 토큰이 없어도 보드를 읽을 수 있어야
+ * 한다(관리자 페이지가 든 것이 이 값이고, 어차피 스스로 사람 토큰을 발급할 수 있다).
+ */
+export function isAdminToken(expected, presented) {
+  const a = Buffer.from(String(expected || ""), "utf8");
+  const b = Buffer.from(String(presented || ""), "utf8");
+  if (a.length === 0 || a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 /**
  * @returns {{ token: string, source: string }} token 이 "" 이면 미설정 —

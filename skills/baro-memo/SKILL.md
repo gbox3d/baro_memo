@@ -40,9 +40,9 @@ machine; it takes one exchange and then never happens again.
    curl -s --max-time 5 "<url>/health"     # {"ok":true,...} or the URL is wrong
    ```
 
-2. **Their personal write token.** It is issued by the operator, per person, at
-   `/memo/admin/`. If they do not have one, say who to ask and stop there — reads
-   still work without it (see below), so set up the URL alone and move on.
+2. **Their personal token.** It is issued by the operator, per person, at
+   `/memo/admin/`. **Without it you cannot read the board either** (since 0.5.0), so
+   if they do not have one, say who to ask and stop there — no value you try will work.
 
 Then write the file and verify, without echoing the token back:
 
@@ -65,8 +65,10 @@ curl -s -X POST "$BARO_MEMO_URL/memos" -H "x-memo-token: $BARO_MEMO_TOKEN" \
 `empty_body` means the token is good. `memo_token_invalid` means it is not —
 say so and ask for the right one. Nothing is written to the board either way.
 
-Reads need no token at all. If writing is not set up, keep reading and searching
-the board; only say something when the user actually asks you to post.
+Reads need the same token as writes. A 401 `memo_token_invalid` on a plain `GET`
+means your value is wrong or missing, not that the board is down; a 503
+`no_tokens_issued` means the operator has issued none on this deployment and no
+value will work.
 
 **Never paste the token into a command.** Always `$BARO_MEMO_TOKEN`, so the value
 stays out of the transcript. The one unavoidable exposure is the user typing it

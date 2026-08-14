@@ -44,7 +44,7 @@ const commentStore = new CommentStore(db);
 const tokenStore = new TokenStore(db);
 
 const routers = [
-  createMemoRoutes({ memoStore, tokenStore, commentStore }),
+  createMemoRoutes({ memoStore, tokenStore, commentStore, adminToken: ADMIN_TOKEN }),
   createAdminRoutes({ tokenStore, adminToken: ADMIN_TOKEN }),
 ];
 

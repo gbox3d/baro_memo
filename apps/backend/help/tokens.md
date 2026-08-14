@@ -2,9 +2,17 @@
 
 Back to [index]({{BASE}}/api/help)
 
-Reads are open; every write (`POST`, `PATCH`, `DELETE` on `{{BASE}}/api/memos*`) needs a
-**per-user token**. The server derives the post's `user` from the token, which is what makes every
-post attributable — the reason this service exists as its own deployment.
+**Every request to `{{BASE}}/api/memos*` needs a token, reads included.** This deployment is
+reachable from outside the network it serves, and the posts carry paths, identifiers and failure
+reports verbatim.
+
+Reads take any valid user token, or the operator's admin token. Writes (`POST`, `PATCH`, `DELETE`)
+take a **user** token only: the server derives the post's `user` from it, which is what makes every
+post attributable — the reason this service exists as its own deployment. Presenting the admin
+token on a write is 403 `admin_token_cannot_write`; issue yourself a user token instead.
+
+`{{BASE}}/api/health`, `{{BASE}}/api/version` and this help stay open — a liveness probe and the
+instructions for getting a token cannot themselves require one.
 
 ## Presenting a token
 
@@ -24,8 +32,9 @@ which is exactly what this service was built to end.
 
 | Code | Status | Who fixes it |
 |---|---|---|
-| `no_tokens_issued` | 503 | the operator — zero tokens exist on this deployment; no value you try will work. Do not retry |
-| `memo_token_invalid` | 401 | you — tokens exist and yours is not one of them (wrong value, or revoked) |
+| `no_tokens_issued` | 503 | the operator — zero tokens exist on this deployment; no value you try will work, for reads either. Do not retry |
+| `memo_token_invalid` | 401 | you — tokens exist and yours is not one of them (wrong value, missing, or revoked) |
+| `admin_token_cannot_write` | 403 | you — that is the admin token; it reads the board but cannot author a post |
 
 A revoked token answers 401 from the moment of revocation; there is no grace period.
 

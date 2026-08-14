@@ -1,7 +1,8 @@
 // `/api/memos*` 의 HTTP 계약. 이 파일의 주제는 둘이다.
 //
-//  1) **쓰기와 읽기의 문턱이 다르다.** 읽기는 열려 있고, 쓰기는 사용자 토큰에서 user 를
-//     역산해 찍는다 — 본문으로는 user 를 사칭할 수 없어야 한다.
+//  1) **문턱은 하나이고 쓰기에 하나 더 붙는다.** 0.5.0 부터 읽기도 토큰이 필요하고, 쓰기는
+//     거기에 더해 **사람** 토큰이어야 한다 — 서버가 user 를 찍어야 하기 때문이다. 본문으로는
+//     user 를 사칭할 수 없어야 한다.
 //  2) **거절은 원인마다 다른 상태여야 한다.** 토큰 0개(운영자가 고칠 일)와 토큰 불일치
 //     (부르는 쪽이 고칠 일)를 같은 401 로 뭉개면, 운영자는 영영 맞는 값을 찾아 헤맨다.
 import assert from "node:assert/strict";
@@ -17,17 +18,19 @@ import { createMemoRoutes } from "../src/memo/routes.mjs";
 //
 // 라우터의 진짜 서명은 (method, pathname, query, body, headers) 다. 쿼리를 쓰지 않는 검사가
 // 대부분이라 손잡이를 둘로 나눈다: handle 은 쿼리 없는 호출, list 는 쿼리를 거는 목록 호출.
-function rig(users = ["kim"]) {
+function rig(users = ["kim"], { adminToken = "adm_test_value" } = {}) {
   const db = openDb(":memory:");
   const memoStore = new MemoStore(db);
   const commentStore = new CommentStore(db);
   const tokenStore = new TokenStore(db);
   const tokens = Object.fromEntries(users.map((u) => [u, tokenStore.issue({ user: u }).token]));
-  const router = createMemoRoutes({ memoStore, tokenStore, commentStore });
+  const router = createMemoRoutes({ memoStore, tokenStore, commentStore, adminToken });
+  // 읽기도 토큰이 필요해졌으므로 기본 헤더가 있다. 문턱 자체를 보는 검사는 `{}` 를 명시해 끈다.
+  const reader = users.length ? { "x-memo-token": tokens[users[0]] } : {};
   return {
-    handle: (method, path, body = {}, headers = {}) => router(method, path, null, body, headers),
-    list: (query = "") => router("GET", "/api/memos", query, {}, {}),
-    memoStore, commentStore, tokenStore, tokens,
+    handle: (method, path, body = {}, headers = reader) => router(method, path, null, body, headers),
+    list: (query = "", headers = reader) => router("GET", "/api/memos", query, {}, headers),
+    adminToken, memoStore, commentStore, tokenStore, tokens,
   };
 }
 
@@ -37,9 +40,16 @@ test("이 축의 경로가 아니면 null — 다음 라우터로 넘어간다",
   assert.equal(await handle("GET", "/api/memoranda"), null); // 접두사만 닮은 남의 경로
 });
 
-test("읽기는 토큰 없이 열려 있다", async () => {
+test("읽기에도 토큰이 필요하다 — 이 보드는 밖에서 닿는 주소로 열려 있다", async () => {
   const { list, memoStore } = rig();
   memoStore.create({ body: "first" }, "kim");
+
+  const anonymous = await list("", {});
+  assert.equal(anonymous.status, 401);
+  assert.equal(anonymous.json.code, "memo_token_invalid");
+  assert.match(anonymous.json.error, /reads as well as writes/, "왜 막혔는지가 문장에 있어야 한다");
+  assert.equal((await list("", { "x-memo-token": "bm_wrong" })).status, 401);
+
   const res = await list();
   assert.equal(res.status, 200);
   assert.equal(res.json.count, 1);
@@ -47,13 +57,30 @@ test("읽기는 토큰 없이 열려 있다", async () => {
   assert.equal(res.json.memos[0].bodyPreview, "first");
 });
 
+test("관리자 토큰은 읽기까지 — 쓰기는 사람 토큰이어야 한다", async () => {
+  const { handle, list, adminToken, memoStore } = rig();
+  memoStore.create({ body: "first" }, "kim");
+  const asOperator = { "x-memo-token": adminToken };
+
+  // 관리자 페이지가 든 것이 이 값이다. 막으면 운영자가 자기 보드를 못 읽는다.
+  assert.equal((await list("", asOperator)).status, 200);
+
+  // 그러나 쓰기는 안 된다 — 이 값에는 사람이 없어서 user 에 찍을 것이 없다.
+  const write = await handle("POST", "/api/memos", { body: "x" }, asOperator);
+  assert.equal(write.status, 403);
+  assert.equal(write.json.code, "admin_token_cannot_write");
+});
+
 test("토큰 0개는 401 이 아니라 503 — 고칠 사람이 다르다", async () => {
   const { handle } = rig([]);
   const res = await handle("POST", "/api/memos", { body: "x" }, { "x-memo-token": "bm_anything" });
   assert.equal(res.status, 503);
   assert.equal(res.json.code, "no_tokens_issued");
-  // 읽기는 계속 된다.
-  assert.equal((await handle("GET", "/api/memos", {}, {})).status, 200);
+  // 읽기도 같은 처지다. 발급된 토큰이 하나도 없으면 어떤 값을 넣어도 읽을 수 없다 —
+  // 401(네 값이 틀렸다)로 답하면 운영자는 영영 맞는 값을 찾아 헤맨다.
+  const read = await handle("GET", "/api/memos", {}, {});
+  assert.equal(read.status, 503);
+  assert.equal(read.json.code, "no_tokens_issued");
 });
 
 test("쓰기는 토큰 없이 401, 틀린 토큰도 401", async () => {
@@ -112,7 +139,7 @@ test("접수 → 조회 → 부분 갱신 → 삭제 왕복", async () => {
   const made = await handle("POST", "/api/memos", { title: "야간 판독", body: "3번 면 실패" }, auth);
   const { id } = made.json.memo;
 
-  const got = await handle("GET", `/api/memos/${id}`, {}, {});
+  const got = await handle("GET", `/api/memos/${id}`);
   assert.equal(got.json.memo.title, "야간 판독");
 
   const patched = await handle("PATCH", `/api/memos/${id}`, { status: "done" }, auth);
@@ -121,13 +148,13 @@ test("접수 → 조회 → 부분 갱신 → 삭제 왕복", async () => {
 
   const gone = await handle("DELETE", `/api/memos/${id}`, {}, auth);
   assert.equal(gone.json.deleted, true);
-  assert.equal((await handle("GET", `/api/memos/${id}`, {}, {})).status, 404);
+  assert.equal((await handle("GET", `/api/memos/${id}`)).status, 404);
 });
 
 test("없는 id 와 숫자가 아닌 id 는 똑같이 404", async () => {
   const { handle } = rig();
   for (const id of ["999", "abc", "1.5", "-2"]) {
-    const res = await handle("GET", `/api/memos/${id}`, {}, {});
+    const res = await handle("GET", `/api/memos/${id}`);
     assert.equal(res.status, 404, `id=${id}`);
     assert.equal(res.json.code, "memo_not_found");
   }
@@ -290,7 +317,7 @@ test("지원하지 않는 메서드는 405 — 종단 404 로 흘리면 '경로�
 
 // ---- 댓글 --------------------------------------------------------------------------------
 //
-// 문턱은 메모 축과 같다(읽기는 열려 있고 쓰기는 토큰). 여기서 따로 지켜야 하는 것은 **경로가
+// 문턱은 메모 축과 같다(읽기도 토큰, 쓰기는 사람 토큰). 여기서 따로 지켜야 하는 것은 **경로가
 // 사실과 맞는가** 다 — 댓글은 늘 어떤 메모의 것이고, 경로가 거짓이면 지운 사람은 자기가 무엇을
 // 지웠는지 모른다.
 
@@ -308,17 +335,18 @@ test("한 건은 문서다 — 메모와 댓글을 함께 준다", async () => {
   assert.equal(res.json.memo.commentCount, 2, "개수는 목록에서도 같은 이름으로 보인다");
 });
 
-test("댓글 읽기는 열려 있고 쓰기는 토큰에서 user 를 찍는다", async () => {
+test("댓글도 읽기에 토큰이 필요하고, 쓰기는 토큰에서 user 를 찍는다", async () => {
   const { handle, tokens } = rig(["kim"]);
   const auth = { "x-memo-token": tokens.kim };
   const { json: made } = await handle("POST", "/api/memos", { body: "b" }, auth);
   const path = `/api/memos/${made.memo.id}/comments`;
 
+  assert.equal((await handle("GET", path, {}, {})).status, 401, "댓글 읽기도 문턱 위에 있다");
   const open = await handle("GET", path);
   assert.equal(open.status, 200);
   assert.deepEqual(open.json, { count: 0, memoId: made.memo.id, comments: [] });
 
-  const noToken = await handle("POST", path, { body: "x" });
+  const noToken = await handle("POST", path, { body: "x" }, {});
   assert.equal(noToken.status, 401);
   assert.equal(noToken.json.code, "memo_token_invalid");
 
@@ -357,7 +385,7 @@ test("댓글 삭제는 경로가 맞아야 한다 — 남의 메모 밑으로는
   assert.equal(wrongPath.status, 404);
   assert.equal(wrongPath.json.code, "comment_not_found");
 
-  const noToken = await handle("DELETE", `/api/memos/${a.memo.id}/comments/${made.comment.id}`);
+  const noToken = await handle("DELETE", `/api/memos/${a.memo.id}/comments/${made.comment.id}`, {}, {});
   assert.equal(noToken.status, 401);
 
   const ok = await handle("DELETE", `/api/memos/${a.memo.id}/comments/${made.comment.id}`, {}, auth);
