@@ -8,6 +8,7 @@
 // 댓글은 지우고 다시 단다 — 삭제는 있다.
 import { fail, text, toId } from "./fields.mjs";
 import { ensureSchema } from "./schema.mjs";
+import { AuditStore } from "./audit-store.mjs";
 
 export const toCommentId = toId;
 
@@ -27,6 +28,7 @@ export class CommentStore {
   constructor(db) {
     this.db = db;
     ensureSchema(db);
+    this.audit = new AuditStore(db);
   }
 
   /** 한 메모의 댓글 — 시간순(오래된 것이 위). 대화는 위에서 아래로 읽힌다. */
@@ -51,8 +53,19 @@ export class CommentStore {
     return this.get(Number(lastInsertRowid));
   }
 
-  remove(id) {
-    return this.db.prepare("DELETE FROM comment WHERE id = ?").run(id).changes > 0;
+  // 수정이 없으므로 이력에 남는 것은 삭제뿐이다. 남의 정정을 지운 것도 추적된다.
+  remove(id, user = "") {
+    const comment = this.get(id);
+    if (!comment) return false;
+    const deleted = this.db.prepare("DELETE FROM comment WHERE id = ?").run(id).changes > 0;
+    if (deleted) {
+      this.audit.record({
+        action: "comment_delete", actor: user, memoId: comment.memoId, commentId: id,
+        summary: `deleted a comment by ${comment.user || "(unknown)"}`,
+        before: comment,
+      });
+    }
+    return deleted;
   }
 
   countFor(memoId) {

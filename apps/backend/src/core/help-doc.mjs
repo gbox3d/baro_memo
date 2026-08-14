@@ -62,6 +62,10 @@ export const AGENT_ROUTES = Object.freeze([
     body: "{user, note?}" },
   { method: "DELETE", path: "/api/admin/tokens/:tokenId", topic: "tokens",
     summary: "Revoke a token (soft — the row stays for the audit trail). Admin token only" },
+
+  { method: "GET", path: "/api/admin/audit", topic: "tokens",
+    summary: "Deletion and edit history, newest first — {count, total, limit, offset, entries}. Each entry carries actor, action (memo_update|memo_delete|comment_delete), the overwritten or deleted content in `before`, and `after` for edits. Admin token only: it holds the full text of deleted posts",
+    query: "?memoId=&action=&actor=&limit=50&offset=0" },
 ]);
 
 /** 이 서버가 지금 무엇인지 — 문서에 적을 수 없는(적으면 낡는) 사실만 계산한다. */

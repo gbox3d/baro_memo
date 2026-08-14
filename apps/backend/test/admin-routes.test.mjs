@@ -5,18 +5,26 @@ import test from "node:test";
 
 import { openDb } from "../src/core/db.mjs";
 import { TokenStore } from "../src/auth/token-store.mjs";
+import { MemoStore } from "../src/memo/memo-store.mjs";
+import { CommentStore } from "../src/memo/comment-store.mjs";
+import { AuditStore } from "../src/memo/audit-store.mjs";
 import { createAdminRoutes } from "../src/admin/routes.mjs";
 
 const ADMIN = "adm_s3cr3t";
 
-// 라우터 서명은 (method, pathname, query, body, headers) 다. 이 축은 쿼리를 쓰지 않으므로
-// 자리를 null 로 채워 두고 검사는 body·headers 만 본다.
+// 라우터 서명은 (method, pathname, query, body, headers) 다. 토큰 축은 쿼리를 쓰지 않아
+// 기본값이 null 이고, 이력 축은 마지막 인자로 쿼리를 건다.
 function rig({ adminToken = ADMIN } = {}) {
-  const tokenStore = new TokenStore(openDb(":memory:"));
-  const router = createAdminRoutes({ tokenStore, adminToken });
+  const db = openDb(":memory:");
+  const tokenStore = new TokenStore(db);
+  const memoStore = new MemoStore(db);
+  const commentStore = new CommentStore(db);
+  const auditStore = new AuditStore(db);
+  const router = createAdminRoutes({ tokenStore, auditStore, adminToken });
   return {
-    handle: (method, path, body = {}, headers = {}) => router(method, path, null, body, headers),
-    tokenStore,
+    handle: (method, path, body = {}, headers = {}, query = null) => router(method, path, query, body, headers),
+    admin: { "x-memo-token": adminToken },
+    tokenStore, memoStore, commentStore, auditStore,
   };
 }
 
@@ -89,4 +97,55 @@ test("지원하지 않는 메서드는 405", async () => {
   const made = await handle("POST", "/api/admin/tokens", { user: "kim" }, auth);
   assert.equal((await handle("PUT", `/api/admin/tokens/${made.json.token.id}`, {}, auth)).status, 405);
   assert.equal((await handle("PATCH", "/api/admin/tokens", {}, auth)).status, 405);
+});
+
+// ---- 삭제·수정 이력 -----------------------------------------------------------------------
+//
+// 관리자 축에 있는 이유는 내용물이다: 지워진 메모의 전문이 들어 있다. 사용자 토큰으로 열리면
+// "지웠다"가 "목록에서만 빠졌다"가 된다.
+
+test("이력은 관리자 토큰으로만 열린다", async () => {
+  const { handle, admin } = rig();
+  const anonymous = await handle("GET", "/api/admin/audit", {}, {});
+  assert.equal(anonymous.status, 401);
+  assert.equal(anonymous.json.code, "admin_token_invalid");
+
+  const ok = await handle("GET", "/api/admin/audit", {}, admin);
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.json, { count: 0, total: 0, limit: 50, offset: 0, entries: [] });
+});
+
+test("이력에 삭제된 메모의 전문이 남는다", async () => {
+  const { handle, admin, memoStore } = rig();
+  const memo = memoStore.create({ title: "지울 것", body: "사라질 본문" }, "kim");
+  memoStore.remove(memo.id, "kim");
+
+  const res = await handle("GET", "/api/admin/audit", {}, admin);
+  assert.equal(res.json.total, 1);
+  const [entry] = res.json.entries;
+  assert.equal(entry.action, "memo_delete");
+  assert.equal(entry.actor, "kim");
+  assert.equal(entry.before.memo.body, "사라질 본문");
+});
+
+test("이력 쿼리도 오타를 거절한다 — 조용한 무시는 없다", async () => {
+  const { handle, admin } = rig();
+  const typo = await handle("GET", "/api/admin/audit", {}, admin, "memoid=3");
+  assert.equal(typo.status, 400);
+  assert.equal(typo.json.code, "unknown_param");
+
+  const badAction = await handle("GET", "/api/admin/audit", {}, admin, "action=memo_burn");
+  assert.equal(badAction.status, 400);
+  assert.equal(badAction.json.code, "invalid_param");
+
+  const badLimit = await handle("GET", "/api/admin/audit", {}, admin, "limit=0");
+  assert.equal(badLimit.status, 400);
+});
+
+test("이력에는 쓰기 경로가 없다", async () => {
+  const { handle, admin } = rig();
+  for (const method of ["POST", "PATCH", "DELETE"]) {
+    const res = await handle(method, "/api/admin/audit", { anything: 1 }, admin);
+    assert.equal(res.status, 405, `${method} 가 405 가 아닙니다`);
+  }
 });

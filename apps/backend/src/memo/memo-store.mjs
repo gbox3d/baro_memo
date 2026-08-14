@@ -12,6 +12,7 @@
 // 두 갱신에서 뒤엣것이 앞엣것을 통째로 지우는 사고를 스키마 수준에서 없앤다(원본의 결정).
 import { fail, text, toId } from "./fields.mjs";
 import { ensureSchema } from "./schema.mjs";
+import { AuditStore } from "./audit-store.mjs";
 
 export const MEMO_STATUSES = Object.freeze(["open", "doing", "done"]);
 
@@ -129,6 +130,9 @@ export class MemoStore {
   constructor(db) {
     this.db = db;
     ensureSchema(db);
+    // 이력은 **스토어 안에서** 남는다. 라우터가 부르는 구조면 언젠가 한 경로가 빠지고,
+    // 그때부터 추적은 거짓말이 된다.
+    this.audit = new AuditStore(db);
   }
 
   // 목록 — 걸러서, 잘라서, 요약으로. 인자는 라우터가 쿼리스트링에서 검증해 넘긴 것만 들어온다.
@@ -212,7 +216,8 @@ export class MemoStore {
 
   // 부분 갱신. 보내지 않은 필드는 건드리지 않는다. updated_by 는 매번 토큰의 사용자로 찍힌다.
   update(id, patch = {}, user = "") {
-    if (!this.get(id)) return null;
+    const before = this.get(id);
+    if (!before) return null;
     const sets = [];
     const values = [];
     if (patch.title !== undefined) { sets.push("title = ?"); values.push(text(patch.title, "title")); }
@@ -228,10 +233,39 @@ export class MemoStore {
     sets.push("updated_by = ?", "updated_at = ?");
     values.push(user, new Date().toISOString(), id);
     this.db.prepare(`UPDATE memo SET ${sets.join(", ")} WHERE id = ?`).run(...values);
-    return this.get(id);
+    const after = this.get(id);
+
+    // 바뀐 칸만 남긴다. 안 바뀐 칸까지 실으면 이력을 읽는 쪽이 무엇이 바뀌었는지 다시
+    // 비교해야 하고, 같은 값으로 덮은 PATCH 는 애초에 이력이 아니다.
+    const changed = ["title", "body", "status", "author"].filter((f) => before[f] !== after[f]);
+    if (changed.length) {
+      this.audit.record({
+        action: "memo_update", actor: user, memoId: id,
+        summary: `updated ${changed.join(", ")}`,
+        before: Object.fromEntries(changed.map((f) => [f, before[f]])),
+        after: Object.fromEntries(changed.map((f) => [f, after[f]])),
+      });
+    }
+    return after;
   }
 
-  remove(id) {
-    return this.db.prepare("DELETE FROM memo WHERE id = ?").run(id).changes > 0;
+  // 삭제는 되돌릴 수 없다. 사라지는 것을 **전부** 이력에 남긴다 — 메모 본문과, cascade 로
+  // 같이 사라지는 댓글까지. 댓글을 빼면 "그 스레드에 있던 답" 이 추적 밖으로 나간다.
+  remove(id, user = "") {
+    const memo = this.get(id);
+    if (!memo) return false;
+    const comments = this.db.prepare("SELECT * FROM comment WHERE memo_id = ? ORDER BY id").all(id)
+      .map((c) => ({ id: c.id, user: c.user, author: c.author, body: c.body, createdAt: c.created_at }));
+
+    const deleted = this.db.prepare("DELETE FROM memo WHERE id = ?").run(id).changes > 0;
+    if (deleted) {
+      this.audit.record({
+        action: "memo_delete", actor: user, memoId: id,
+        summary: `deleted "${memo.title || "(no title)"}"`
+          + (comments.length ? ` with ${comments.length} comment(s)` : ""),
+        before: { memo, comments },
+      });
+    }
+    return deleted;
   }
 }

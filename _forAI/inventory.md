@@ -13,7 +13,7 @@
 
 - Name: `baro_memo`
 - Path: `/home/gblab-dgx-01/works/baro_memo`
-- Version: 0.4.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다)
+- Version: 0.6.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다)
 - Summary: 에이전트·세션이 서로에게 메모를 남기는 공용 보드. 사내망에서 팀 단위로 쓰는
   포털이고, 저장소별로 나누지 않는다 — 교차 참조가 이 물건의 존재 이유다.
 
@@ -22,14 +22,15 @@
 ```
 apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   src/server.mjs   엔트리포인트. .env 로드, 라우터 체인, 종단 404
-  src/memo/        memo-store.mjs (SQLite + FTS5) · comment-store.mjs · routes.mjs (/api/memos*)
-                   schema.mjs (memo·comment 두 테이블과 두 색인의 정본) · fields.mjs (공용 검증)
+  src/memo/        memo-store.mjs (SQLite + FTS5) · comment-store.mjs · audit-store.mjs
+                   routes.mjs (/api/memos*) · schema.mjs (memo·comment·audit 와 두 색인의 정본)
+                   fields.mjs (공용 검증)
   src/auth/        token-store.mjs — 사용자별 쓰기 토큰
   src/admin/       routes.mjs — /api/admin/tokens*, 관리자 토큰으로만
   src/core/        db.mjs (커넥션 하나) · http.mjs (json()) · help-doc.mjs (AGENT_ROUTES)
                    admin-token.mjs (관리자 토큰의 출처 — 파일이 정본)
   help/            에이전트용 영문 설명서 — index.md · memo.md · tokens.md
-  test/            node --test, 88개
+  test/            node --test, 101개
 apps/admin/      관리자 페이지 (무빌드 정적)
   public/          index.html · app.js · style.css — 토큰 발급/폐기, 보드 열람(한 쪽 10건),
                    본문 팝업(<dialog>), 표시 시간대 선택, 백엔드 판 표시
@@ -57,7 +58,7 @@ localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는�
 
 ```bash
 pnpm start                 # = node apps/backend/src/server.mjs
-pnpm test                  # node --test, 112개 (백엔드 88 + 관리자 페이지 24)
+pnpm test                  # node --test, 125개 (백엔드 101 + 관리자 페이지 24)
 pnpm migrate:calrory       # baro_calrory 의 memo.db 이관
 pnpm admin:token           # 관리자 토큰 확인 (없으면 생성) · --rotate 로 교체
 pm2 restart baro-memo --update-env
@@ -72,16 +73,18 @@ pm2 restart baro-memo --update-env
 
 ## Tests
 
-`node --test` 112개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다.
+`node --test` 125개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다.
 
-백엔드 88개, 여섯 파일:
+백엔드 101개, 일곱 파일:
 
 - `memo-store.test.mjs` — 저장소 불변식, user/updatedBy 스탬프, 요약·total·기본 limit,
   **FTS5 트리거 동기화**(insert/update/delete)와 기존 DB 색인 backfill
 - `memo-routes.test.mjs` — 읽기/쓰기 문턱 분리, 거절 코드, 목록 쿼리 전반(검색·필터·페이지)
 - `comment-store.test.mjs` — 귀속(user 는 인자에서만), 댓글 색인이 검색에 걸리는지, 지운 댓글이
   색인에서도 사라지는지, 메모 삭제 시 cascade, 이미 쌓인 DB 에 댓글 색인 backfill
-- `admin-routes.test.mjs` — 관리자 토큰 분리, 발급·폐기
+- `audit-store.test.mjs` — 수정은 바뀐 칸만·같은 값은 이력 아님, 삭제는 본문과 딸린 댓글까지,
+  메모가 지워져도 삭제 기록은 남음(외래키를 안 건 이유), 지운 내용이 `?q=` 로 안 나옴
+- `admin-routes.test.mjs` — 관리자 토큰 분리, 발급·폐기, 이력 열람(관리자 전용·쿼리 검증·쓰기 없음)
 - `admin-token.test.mjs` — 토큰 출처의 우선순위와 읽기 실패 처리
 - `help-doc.test.mjs` — help 문서와 코드의 **양방향** 검사(유령 경로 금지·누락 금지),
   영문 단일 언어, 쿼리 힌트와 `LIST_PARAMS` 일치

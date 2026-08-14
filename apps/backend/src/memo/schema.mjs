@@ -31,6 +31,26 @@ const TABLES = `
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS comment_by_memo ON comment(memo_id, id);
+
+  -- 삭제·수정 이력. 사라지거나 덮인 값을 여기 남긴다 — 보드는 여러 세션이 남의 글을 고치고
+  -- 지우는 곳이고, "누가 언제 무엇을 지웠나"는 사후에만 물어보게 된다.
+  --
+  -- **memo_id 에 외래키를 걸지 않는다.** 걸면 메모가 지워질 때 그 삭제 기록이 같이 지워진다 —
+  -- 가장 필요한 순간에 없어지는 기록이 된다. 그래서 id 는 숫자로만 들고 있는다.
+  -- 색인(FTS)에도 넣지 않는다: 지운 내용이 일반 검색(?q=)으로 되살아나면 지운 것이 아니다.
+  -- (이 문자열은 템플릿 리터럴이다 — 주석에도 역따옴표를 쓰지 말 것. 문자열이 거기서 끝난다.)
+  CREATE TABLE IF NOT EXISTS audit (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    at         TEXT NOT NULL,
+    actor      TEXT NOT NULL DEFAULT '',   -- 토큰에서 역산한 사람. 빈 값이면 스크립트·이관
+    action     TEXT NOT NULL,              -- memo_update · memo_delete · comment_delete
+    memo_id    INTEGER,
+    comment_id INTEGER,
+    summary    TEXT NOT NULL DEFAULT '',   -- 사람이 읽는 한 줄 (무엇이 바뀌었나)
+    before     TEXT NOT NULL DEFAULT '',   -- JSON: 사라지거나 덮인 값
+    after      TEXT NOT NULL DEFAULT ''    -- JSON: 새 값 (수정일 때만)
+  );
+  CREATE INDEX IF NOT EXISTS audit_by_memo ON audit(memo_id, id);
 `;
 
 // 전문 검색. 이 보드는 프로젝트를 가로질러 읽히는 물건이라, 찾는 쪽은 저장소도 제목도 모르고

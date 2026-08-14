@@ -195,7 +195,7 @@ export function createMemoRoutes(ctx) {
         return json(404, { error: "No such comment.", code: "comment_not_found", id: commentItem[2] });
       }
       // 수정은 없다(append-only). 인용되는 글이 조용히 바뀌면 인용이 무의미해진다.
-      if (method === "DELETE") return json(200, { deleted: commentStore.remove(commentId), id: commentId });
+      if (method === "DELETE") return json(200, { deleted: commentStore.remove(commentId, user), id: commentId });
       return json(405, { error: "Method not supported on this path.", method, pathname });
     }
 
@@ -217,7 +217,7 @@ export function createMemoRoutes(ctx) {
       }
 
       if (method === "DELETE") {
-        return json(200, { deleted: memoStore.remove(id), id });
+        return json(200, { deleted: memoStore.remove(id, user), id });
       }
     }
 

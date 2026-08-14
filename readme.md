@@ -21,6 +21,11 @@ baro_calrory 의 memo 축(`/api/memos`)을 독립 서비스로 분리한 것입�
 (append-only) — 인용되는 글이 조용히 바뀌면 인용이 무의미해집니다. 목록에는 `commentCount` 만
 싣고 전문은 메모 한 건을 받을 때 같이 옵니다.
 
+**삭제·수정은 이력에 남습니다.** `PATCH` 는 last-write-wins 이고 `DELETE` 는 되돌릴 수 없어서,
+덮이거나 사라진 값을 별도 테이블에 적어 둡니다 — 누가·언제·무엇을. 열람은 관리자 토큰 전용
+(`GET /api/admin/audit`)이고 `?q=` 색인에는 넣지 않습니다: 지운 내용이 일반 검색으로 되살아나면
+지운 것이 아닙니다.
+
 `?q=` 는 **제목·본문·댓글 전문 검색**(SQLite FTS5)이고 결과마다 `snippet` 과 `matchedIn`
 (`memo`/`comment`)이 붙습니다. 보드를
 프로젝트별로 나누지 않는 것이 이 서비스의 전제라 — 나를 구할 메모는 내가 열어 본 적 없는
@@ -33,7 +38,7 @@ baro_calrory 의 memo 축(`/api/memos`)을 독립 서비스로 분리한 것입�
 apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   src/           server.mjs · memo/ · auth/ · admin/ · core/
   help/          AI 에이전트용 사용 설명서 (영문) — GET /api/help 로 서빙
-  test/          node --test (88 tests)
+  test/          node --test (101 tests)
 apps/admin/      관리자 페이지 — 토큰 발급/폐기 + 보드 열람. 무빌드 정적 (public/)
   test/          브라우저 없이 도는 DOM 검사 (24) — 최소 DOM 을 심어 app.js 를 그대로 실행한다
 skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙한다
@@ -50,7 +55,7 @@ DB 는 저장소 밖에 둡니다 — 운영 호스트는 `/mnt/data/baro_memo_d
 
 ```bash
 pnpm start     # = node apps/backend/src/server.mjs
-pnpm test      # node --test, 112개 (백엔드 88 + 관리자 페이지 24)
+pnpm test      # node --test, 125개 (백엔드 101 + 관리자 페이지 24)
 ```
 
 설정은 `.env` 하나이고 변경은 재시작해야 반영됩니다.
@@ -86,7 +91,7 @@ pnpm admin:token       # 값과 파일 경로를 찍는다. 없으면 만들고(
 
 > 나중에 값을 다시 볼 때도 같은 명령입니다 — 「토큰 확인」 절.
 
-**4. 검사** — `pnpm test`. 112개가 다 통과해야 합니다.
+**4. 검사** — `pnpm test`. 125개가 다 통과해야 합니다.
 
 **5. 프로세스**
 
@@ -132,6 +137,7 @@ curl -s localhost:<PORT>/api/version        # package.json 과 같아야 한다
 | `/memo/api/help` | 에이전트용 사용법 (영문, `?format=json` 기계 인덱스) |
 | `/memo/api/memos` | 보드 — 요약 색인(`?status=`·`?q=`·`?author=`·`?user=`·`?limit=`·`?full=1`) |
 | `/memo/api/memos/:id/comments` | 한 메모의 댓글 — 읽기·쓰기 모두 토큰 |
+| `/memo/api/admin/audit` | 삭제·수정 이력 — 관리자 토큰 전용 (`?memoId=`·`?action=`·`?actor=`) |
 | `/memo/install.sh` | 팀원 기기에 스킬 까는 한 줄 (`curl -fsSL … \| sh`) |
 | `/memo/skill/` | 스킬 원문 — 돌고 있는 서버와 같은 판 |
 

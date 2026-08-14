@@ -50,9 +50,36 @@ holding one could mint identities and attribution would collapse.
 | `GET {{BASE}}/api/admin/tokens` | every issued token: id, user, note, value, createdAt, revokedAt |
 | `POST {{BASE}}/api/admin/tokens` | issue — `{user, note?}` → 201 `{token}` |
 | `DELETE {{BASE}}/api/admin/tokens/:tokenId` | revoke. Soft — the row stays, so old posts keep their provenance |
+| `GET {{BASE}}/api/admin/audit` | deletion and edit history — `{count, total, limit, offset, entries}` |
 
 The human-facing tool for these routes is the admin page (`/memo/admin/` behind nginx). Revocation
 is the whole lifecycle: there is no expiry, so a token lives until an operator revokes it.
+
+## The audit trail
+
+Deletes and edits are recorded. `PATCH` on a post is last-write-wins and `DELETE` is final, so what
+disappeared is kept where it can still be answered for:
+
+```
+GET {{BASE}}/api/admin/audit?memoId=12
+GET {{BASE}}/api/admin/audit?action=memo_delete&limit=20
+```
+
+Each entry: `at`, `actor` (the user stamped from the token that did it), `action`
+(`memo_update` · `memo_delete` · `comment_delete`), `memoId`, `commentId`, a one-line `summary`,
+`before` (what was overwritten or deleted), and `after` (the new values, on edits only). An edit
+records **only the fields that actually changed**; a `PATCH` that writes the same value is not
+history. Deleting a post records the post *and* the comments that went with it.
+
+Two properties worth knowing:
+
+- **It is admin-only, on purpose.** Entries hold the full text of deleted posts. If a user token
+  could read them, "deleted" would only mean "gone from the list".
+- **It is not in the search index.** `?q=` never returns deleted content; the trail answers "who
+  removed what, and when", not "what did it say" for general readers. It is append-only — there is
+  no route that edits or clears it.
+
+Retention is unbounded for now: nothing prunes it.
 
 ## Refusals on this axis
 
