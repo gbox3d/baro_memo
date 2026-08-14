@@ -94,11 +94,17 @@
   <header>
     <span id="invite-title"></span>
     <span>
+      <select id="invite-lang" title="메시지 언어">
+        <option value="ko">한국어</option>
+        <option value="en">English</option>
+      </select>
+      <button id="invite-reset" type="button" title="고친 것을 버리고 원문으로">다시 만들기</button>
       <button id="invite-copy" type="button" title="메시지 전체를 클립보드로">복사</button>
       <button id="invite-close" type="button" title="닫기 (Esc)">닫기</button>
     </span>
   </header>
-  <textarea id="invite-text" readonly spellcheck="false"></textarea>
+  <!-- 고칠 수 있다. 보내는 사람이 자기 말투로 다듬는 자리이고, 복사되는 것은 화면의 값이다. -->
+  <textarea id="invite-text" spellcheck="false"></textarea>
 </dialog>
 
 <footer><span id="status"></span></footer>

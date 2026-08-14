@@ -28,7 +28,7 @@
 
 ## 제품 기준선
 
-- 버전 0.7.0 · Node 24.15.0 · pm2 프로세스 `baro-memo` · 의존성 0
+- 버전 0.7.1 · Node 24.15.0 · pm2 프로세스 `baro-memo` · 의존성 0
 - 원본은 `baro_calrory` 의 memo 축. 분리하며 더한 것이 **사용자별 쓰기 토큰**이다 — 서버가
   토큰에서 `user` 를 역산해 찍으므로 작성자를 사칭할 수 없다. 원본은 공유 토큰 하나라 자기신고였다.
 
@@ -41,6 +41,7 @@
 | `ADMIN_TOKEN_FILE=/mnt/data/baro_memo_db/admin-token` | `.env` | DB 옆, 권한 600. 비면 토큰 발급이 503 `admin_token_unset`(메모 읽기·쓰기는 계속 된다). 파일이 정본이고 읽기 실패는 `ADMIN_TOKEN` 으로 내려가지 않는다 |
 | 목록 `limit` | 기본 50 / 최대 200 | `LIST_LIMIT` (memo-store.mjs) |
 | `bodyPreview` | 200자 | `PREVIEW_CHARS` |
+| `RELEASE_BASE_URL` | `.env` | **팀원에게 건네는 주소**(밖에서 닿는 것). `/api/health` 가 요청의 접두사와 합쳐 `boardUrl` 로 준다. 비면 null 이고 관리자 페이지는 자기가 열린 주소로 떨어진다 — 사내망 IP 로 열어 두고 밖의 팀원에게 보내면 그 사람은 못 닿는다 |
 | 검색어 하한 | 3자 | `SEARCH_MIN_CHARS` — trigram 토크나이저의 원리적 하한 |
 
 ## 런타임 구조 메모

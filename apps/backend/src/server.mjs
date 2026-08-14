@@ -33,6 +33,10 @@ try { process.loadEnvFile(join(repoRoot, ".env")); } catch { /* .env 없음 — 
 const PORT = Number(process.env.PORT) || 9100;
 const HOST = process.env.HOST || "0.0.0.0";
 const { token: ADMIN_TOKEN, source: ADMIN_SOURCE } = readAdminToken();
+// 팀원에게 건네는 주소. 이 서버가 **자기를 뭐라고 부르라고 알려 줄** 값이라, Host 헤더가
+// 아니라 설정에서 온다 — 운영자가 사내망 IP 로 관리자 페이지를 열어도 초대 메시지에는 밖에서
+// 닿는 주소가 실려야 한다. 비어 있으면 소비자가 자기가 연 주소로 떨어진다(null 을 준다).
+const RELEASE_BASE_URL = String(process.env.RELEASE_BASE_URL || "").trim().replace(/\/+$/, "");
 const DB_PATH = process.env.MEMO_DB
   ? (isAbsolute(process.env.MEMO_DB) ? process.env.MEMO_DB : join(repoRoot, process.env.MEMO_DB))
   : join(repoRoot, "localfiles", "memo.db");
@@ -74,7 +78,13 @@ async function handle(method, pathname, query, body, headers) {
   }
 
   if (method === "GET" && pathname === "/api/health") {
-    return json(200, { ok: true, version: pkg.version, board: memoStore.counts(), tokens: tokenStore.counts() });
+    return json(200, {
+      ok: true, version: pkg.version,
+      // 접두사는 요청이 알려 준다(nginx 의 X-Forwarded-Prefix). 원점은 설정이 정한다 —
+      // 둘을 합쳐야 "밖에서 이 보드를 부르는 이름" 이 된다.
+      boardUrl: RELEASE_BASE_URL ? `${RELEASE_BASE_URL}${basePathOf(headers)}` : null,
+      board: memoStore.counts(), tokens: tokenStore.counts(),
+    });
   }
   if (method === "GET" && pathname === "/api/version") {
     return json(200, { version: pkg.version });

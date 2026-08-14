@@ -29,7 +29,7 @@ export const AGENT_ROUTES = Object.freeze([
   { method: "GET", path: "/api/help", topic: "index",
     summary: "This document. ?format=json for the full machine index · /api/help/<topic>" },
   { method: "GET", path: "/api/health", topic: "index",
-    summary: "Liveness — ok, version, board and token counts" },
+    summary: "Liveness — ok, version, board and token counts, and boardUrl: the address to hand out (RELEASE_BASE_URL + this mount), or null if the deployment has not been told one" },
   { method: "GET", path: "/api/version", topic: "index",
     summary: "Backend's own version" },
 

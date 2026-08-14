@@ -12,7 +12,8 @@ const PAGE = 10;
 // bodies: 목록은 본문을 싣지 않는다(요약 색인이다). 펼친 메모의 전문만 id 로 받아 여기 담아
 // 둔다 — 같은 메모를 다시 펼칠 때 또 부르지 않게.
 const state = {
-  tokens: [], memos: [], bodies: new Map(), comments: new Map(), history: new Map(),
+  tokens: [], memos: [], bodies: new Map(), comments: new Map(), history: new Map(), invites: new Map(),
+  boardUrl: null,
   offset: 0, total: 0,
   selectedToken: null, selectedMemo: null,
 };
@@ -267,13 +268,79 @@ $("#token-copy").addEventListener("click", async () => {
 // 무엇을 하는지 모른다. 그래서 **그대로 보낼 수 있는 안내문**을 만들어 준다: 무엇인지, AI 에게
 // 무엇을 붙여 넣으면 되는지, 그리고 왜 쓸 만한지.
 //
-// 주소는 **운영자가 지금 열어 본 주소**에서 만든다. 사내망으로 열었으면 사내망 주소가, 터널로
-// 열었으면 터널 주소가 팀원에게 간다 — 이 페이지도 자기가 밖에서 무슨 이름으로 불리는지
-// location 으로만 안다(help 가 Host 로 {{ORIGIN}} 을 만드는 것과 같은 이유다).
-const BOARD_ROOT = new URL("../", API).href.replace(/\/$/, "");
+// 화면의 값은 고칠 수 있고, 복사되는 것도 화면의 값이다 — 보내는 사람이 자기 말투로 다듬는
+// 자리다. 고친 내용은 (토큰, 언어)마다 기억해 두고, 「다시 만들기」로 원문으로 되돌린다.
+const INVITE_LANG_KEY = "baro-memo-invite-lang";
+// 주소는 **서버가 알려 준 것**(RELEASE_BASE_URL)이 먼저다. 운영자가 사내망 IP 로 이 페이지를
+// 열었다고 해서 밖에 있는 팀원에게 사내망 주소를 보내면 그 사람은 영영 못 닿는다.
+// 서버가 모른다고 하면(설정이 비었으면) 지금 열어 본 주소로 떨어진다.
+const PAGE_ROOT = new URL("../", API).href.replace(/\/$/, "");
 
-function buildInvite(token) {
-  const api = `${BOARD_ROOT}/api`;
+function boardRoot() {
+  return state.boardUrl || PAGE_ROOT;
+}
+
+function buildInvite(token, lang) {
+  const root = boardRoot();
+  const api = `${root}/api`;
+  const paste = `  ${lang === "en" ? "Docs" : "설명서"}: ${api}/help
+  ${lang === "en" ? "Install" : "설치"}:   curl -fsSL ${root}/install.sh | sh
+  ${lang === "en" ? "My token" : "내 토큰"}: ${token.token}`;
+
+  if (lang === "en") {
+    return `${token.user}, you are invited to the team board (baro memo).
+
+■ What it is
+
+A shared memo board that AI agents (Claude Code and friends) and people write to together. It
+exists because sessions end and the work does not — what a session on another project figured out
+yesterday is what your session finds by searching today. It is deliberately not split per project:
+the post that saves you was probably filed under a repository you have never opened, with a title
+you would never have guessed.
+
+■ How to attach it — paste the block below into your AI chat, as is
+
+----------------------------------------------------------------
+Attach the team memo board to my Claude Code.
+
+${paste}
+
+Read the docs first, install the way they tell you to, then verify the token works.
+----------------------------------------------------------------
+
+Your agent installs the skill, writes the token to ~/.config/baro-memo/env (mode 600) and checks it
+with a request that writes nothing. There is no manual step for you.
+
+■ About that token
+
+It is needed for reads as well as writes. The server derives the author from it, so every post on
+the board carries who wrote it and nobody can claim to be someone else. Values are per person —
+do not paste it into a shared channel. If you lose it, ask me and I will fetch it again.
+
+■ How to actually use it with an AI (this is the part that pays)
+
+1. Have it search before it starts. "Has anyone hit this before" with the literal symptom — the
+   error code, the config key, the file name. It matches across repositories. Thirty seconds of
+   searching buys back half a day.
+2. Have it write down causes that were not obvious. Symptom, actual cause, evidence — three lines.
+   That is the highest-value post here, and the person who reads it next is often you.
+3. For anything long, file it as "open" when starting. The session next to yours then does not
+   redo it. Close it as "done" with the **outcome** (the cause was X, I did Y), not just "fixed" —
+   a closed post that still describes the problem makes the next reader start over.
+4. Do not edit someone else's post; comment on it. Body edits are last-write-wins. Corrections,
+   contradicting results and missing pieces belong in comments, and comments are searchable too.
+5. Dead ends are worth posting. "Tried X, got Y, stopped" is an hour off someone else's day.
+
+■ A few things to know
+
+- Reads need the token too (this board answers on an address reachable from outside).
+- Posts are written in English: most readers are models, and quoted identifiers and error strings
+  have to stay searchable verbatim.
+- Edits and deletions are recorded. Who changed what, and when, is visible to everyone.
+- The contract of record is always ${api}/help — that document, not this message, is current.
+`;
+  }
+
   return `${token.user} 님, 팀 공용 메모 보드(baro memo)에 초대합니다.
 
 ■ 이게 뭔가요
@@ -288,9 +355,7 @@ AI 에이전트(Claude Code 등)와 사람이 같이 쓰는 팀 메모판입니�
 ----------------------------------------------------------------
 팀 메모 보드를 내 Claude Code 에 붙여 줘.
 
-  설명서: ${api}/help
-  설치:   curl -fsSL ${BOARD_ROOT}/install.sh | sh
-  내 토큰: ${token.token}
+${paste}
 
 설명서를 먼저 읽고, 시키는 대로 설치한 다음, 토큰이 맞는지 검증까지 해 줘.
 ----------------------------------------------------------------
@@ -328,12 +393,29 @@ AI 에이전트(Claude Code 등)와 사람이 같이 쓰는 팀 메모판입니�
 }
 
 const inviteDialog = $("#invite-dialog");
+const inviteLang = $("#invite-lang");
+const inviteText = $("#invite-text");
+inviteLang.value = localStorage.getItem(INVITE_LANG_KEY) === "en" ? "en" : "ko";
+
+function inviteKey(token) {
+  return `${token.id}:${inviteLang.value}`;
+}
+
+// 화면을 채운다. 고쳐 둔 것이 있으면 그것을, 없으면 새로 만든 원문을.
+function renderInvite() {
+  const sel = state.tokens.find((t) => t.id === state.selectedToken);
+  if (!sel) return;
+  const edited = state.invites.get(inviteKey(sel));
+  inviteText.value = edited ?? buildInvite(sel, inviteLang.value);
+  $("#invite-title").textContent = inviteLang.value === "en"
+    ? `Invite for ${sel.user} (contains the token)`
+    : `${sel.user} 에게 보낼 안내 (토큰 포함)`;
+}
 
 function openInvite() {
   const sel = state.tokens.find((t) => t.id === state.selectedToken);
   if (!sel) return;
-  $("#invite-title").textContent = `${sel.user} 에게 보낼 안내 (토큰 포함)`;
-  $("#invite-text").value = buildInvite(sel);
+  renderInvite();
   if (inviteDialog.open) return;
   if (typeof inviteDialog.showModal === "function") inviteDialog.showModal();
   else inviteDialog.setAttribute("open", "");
@@ -349,11 +431,30 @@ $("#token-invite").addEventListener("click", openInvite);
 $("#invite-close").addEventListener("click", closeInvite);
 inviteDialog.addEventListener("click", (e) => { if (e.target === inviteDialog) closeInvite(); });
 
+// 고친 것은 (토큰, 언어)마다 기억한다. 실수로 닫았다고 다듬은 문장이 날아가지 않게.
+inviteText.addEventListener("input", () => {
+  const sel = state.tokens.find((t) => t.id === state.selectedToken);
+  if (sel) state.invites.set(inviteKey(sel), inviteText.value);
+});
+
+inviteLang.addEventListener("change", () => {
+  localStorage.setItem(INVITE_LANG_KEY, inviteLang.value);
+  renderInvite(); // 언어마다 따로 기억하므로, 되돌아오면 고쳐 둔 그대로다
+});
+
+$("#invite-reset").addEventListener("click", () => {
+  const sel = state.tokens.find((t) => t.id === state.selectedToken);
+  if (!sel) return;
+  state.invites.delete(inviteKey(sel));
+  renderInvite();
+  say(inviteLang.value === "en" ? "Message restored." : "원문으로 되돌렸습니다.");
+});
+
 $("#invite-copy").addEventListener("click", async () => {
-  const text = $("#invite-text").value;
+  const text = inviteText.value;
   if (!text) return;
   // 복사가 막히는 환경(평문 HTTP + 옛 브라우저)에서도 화면의 textarea 를 손으로 긁을 수 있다.
-  if (await copyText(text, $("#invite-text"))) say("메시지를 복사했습니다.");
+  if (await copyText(text, inviteText)) say("메시지를 복사했습니다.");
   else say("복사가 막혔습니다 — 메시지 칸을 직접 선택해 복사하세요", true);
 });
 
@@ -580,9 +681,13 @@ function sayError(err) {
 async function loadVersion() {
   const el = $("#ver");
   try {
-    const { version } = await call("version");
+    // health 하나로 판과 **팀원에게 건네는 주소**를 같이 받는다. 주소는 설정(RELEASE_BASE_URL)이
+    // 정하는 값이라 이 페이지가 열린 주소와 다를 수 있다 — 사내망으로 열어도 초대장에는 밖에서
+    // 닿는 주소가 실려야 한다.
+    const { version, boardUrl } = await call("health");
+    state.boardUrl = boardUrl ? String(boardUrl).replace(/\/+$/, "") : null;
     el.textContent = version ? `v${version}` : "";
-    el.title = "돌고 있는 백엔드 판";
+    el.title = state.boardUrl ? `돌고 있는 백엔드 판 · 건네는 주소 ${state.boardUrl}` : "돌고 있는 백엔드 판";
   } catch (err) {
     el.textContent = "v?";
     el.title = `백엔드에 닿지 못했습니다 — ${err.status || ""} ${err.message}`.trim();

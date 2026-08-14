@@ -380,13 +380,72 @@ test("메시지에는 팀원이 실제로 필요한 것이 전부 들어 있다"
   assert.equal(page.inviteDialog.open, true);
   assert.ok(text.includes(TOKEN.token), "토큰이 없으면 이 메시지는 쓸모가 없다");
   assert.ok(text.includes(TOKEN.user), "누구에게 보내는 것인지");
-  // 주소는 운영자가 지금 열어 본 주소에서 만든다(shim 의 location 은 board.test 다).
-  assert.ok(text.includes("http://board.test/memo/api/help"), "규약 정본의 주소");
-  assert.ok(text.includes("curl -fsSL http://board.test/memo/install.sh | sh"), "설치 한 줄");
+  // 주소는 **서버가 알려 준 것**(RELEASE_BASE_URL)이다. shim 의 health 가 그 값을 준다.
+  assert.ok(text.includes("http://board.example/memo/api/help"), "규약 정본의 주소");
+  assert.ok(text.includes("curl -fsSL http://board.example/memo/install.sh | sh"), "설치 한 줄");
   // 관리자 페이지 주소는 넣지 않는다 — 받는 사람에게는 열리지 않는 문이고, 안내는 그 사람이
   // 실제로 할 수 있는 것만 담아야 한다.
   assert.equal(text.includes("/admin/"), false);
   assert.match(page.node("#invite-title").textContent, /paimon/);
+});
+
+test("건네는 주소는 설정이 정한다 — 없으면 지금 열어 본 주소로 떨어진다", async () => {
+  // 운영자가 사내망 IP 로 열었다고 밖에 있는 팀원에게 그 주소를 보내면 그 사람은 못 닿는다.
+  const told = await invitePage();
+  assert.ok(told.node("#invite-text").value.includes("http://board.example/memo/api/help"));
+
+  const untold = loadAdminPage({ adminToken: "adm_x", tokens: [TOKEN], boardUrl: null });
+  await untold.settled;
+  untold.pickTokenRow();
+  untold.node("#token-invite")._on.click();
+  assert.ok(untold.node("#invite-text").value.includes("http://board.test/memo/api/help"),
+    "서버가 모른다고 하면 페이지가 열린 주소를 쓴다");
+});
+
+test("메시지는 한국어와 영어 중에 고른다", async () => {
+  const page = await invitePage();
+  assert.match(page.node("#invite-text").value, /초대합니다/);
+
+  page.inviteLang.value = "en";
+  page.inviteLang._on.change();
+  const english = page.node("#invite-text").value;
+  assert.match(english, /you are invited to the team board/);
+  assert.ok(english.includes(TOKEN.token), "언어가 바뀌어도 토큰은 그대로다");
+  assert.ok(english.includes("http://board.example/memo/api/help"));
+  assert.match(page.node("#invite-title").textContent, /Invite for paimon/);
+  assert.equal(page.store.get("baro-memo-invite-lang"), "en", "다음 방문에도 같은 언어로");
+
+  page.inviteLang.value = "ko";
+  page.inviteLang._on.change();
+  assert.match(page.node("#invite-text").value, /초대합니다/);
+});
+
+test("메시지는 고칠 수 있고, 고친 그대로 복사된다", async () => {
+  const page = await invitePage();
+  const box = page.node("#invite-text");
+
+  box.value = "직접 쓴 안내문입니다";
+  box._on.input();
+  await page.node("#invite-copy")._on.click();
+  assert.deepEqual(page.execCopied, ["직접 쓴 안내문입니다"], "원문이 아니라 화면의 값을 복사한다");
+
+  // 닫았다 다시 열어도 다듬은 문장이 남아 있어야 한다.
+  page.node("#invite-close")._on.click();
+  page.node("#token-invite")._on.click();
+  assert.equal(box.value, "직접 쓴 안내문입니다");
+
+  // 언어를 바꾸면 그 언어의 원문이 뜨고, 되돌아오면 고쳐 둔 것이 그대로다.
+  page.inviteLang.value = "en";
+  page.inviteLang._on.change();
+  assert.match(box.value, /you are invited/);
+  page.inviteLang.value = "ko";
+  page.inviteLang._on.change();
+  assert.equal(box.value, "직접 쓴 안내문입니다");
+
+  // 망가뜨렸으면 되돌린다.
+  page.node("#invite-reset")._on.click();
+  assert.match(box.value, /초대합니다/);
+  assert.match(page.status(), /되돌렸습니다/);
 });
 
 test("메시지가 AI 에게 시킬 말과 쓰는 법을 담는다 — 값만 던지지 않는다", async () => {
