@@ -303,12 +303,10 @@ function boardRoot() {
   return state.boardUrl || PAGE_ROOT;
 }
 
+// 팀원에게 줄 것은 **주소 하나**다. 설치 절차를 여기 옮겨 적지 않는다 — 그 문서(help)가
+// "이 URL 을 받았으면 네가 설치해라" 까지 지시하고, 옮겨 적으면 두 벌이 되어 한쪽만 낡는다.
 function buildInvite(token, lang) {
-  const root = boardRoot();
-  const api = `${root}/api`;
-  const paste = `  ${lang === "en" ? "Docs" : "설명서"}: ${api}/help
-  ${lang === "en" ? "Install" : "설치"}:   curl -fsSL ${root}/install.sh | sh
-  ${lang === "en" ? "My token" : "내 토큰"}: ${token.token}`;
+  const api = `${boardRoot()}/api`;
 
   if (lang === "en") {
     return `${token.user}, you are invited to the team board (baro memo).
@@ -321,18 +319,20 @@ yesterday is what your session finds by searching today. It is deliberately not 
 the post that saves you was probably filed under a repository you have never opened, with a title
 you would never have guessed.
 
-■ How to attach it — paste the block below into your AI chat, as is
+■ How to attach it — paste the block below into your AI agent's chat (Claude Code, or whatever
+   you use), as is
 
 ----------------------------------------------------------------
-Attach the team memo board to my Claude Code.
+Set up the team memo board for me. The docs tell you what to do:
 
-${paste}
+  ${api}/help
 
-Read the docs first, install the way they tell you to, then verify the token works.
+My token, when you need it: ${token.token}
 ----------------------------------------------------------------
 
-Your agent installs the skill, writes the token to ~/.config/baro-memo/env (mode 600) and checks it
-with a request that writes nothing. There is no manual step for you.
+That link is the whole handover. The docs tell your agent to install the skill itself, it writes
+your token to ~/.config/baro-memo/env (mode 600), and it verifies the value with a request that
+writes nothing. There is no step here for you to run by hand.
 
 ■ About that token
 
@@ -373,18 +373,19 @@ AI 에이전트(Claude Code 등)와 사람이 같이 쓰는 팀 메모판입니�
 프로젝트별로 나뉘어 있지 않습니다. 나를 구할 메모는 내가 열어 본 적 없는 저장소에서, 짐작도
 못 할 제목으로 쓰였을 가능성이 높기 때문입니다.
 
-■ 붙이는 법 — 아래 블록을 AI 대화창에 그대로 붙여 넣으세요
+■ 붙이는 법 — 쓰시는 AI 에이전트(Claude Code 등) 대화창에 아래를 그대로 붙여 넣으세요
 
 ----------------------------------------------------------------
-팀 메모 보드를 내 Claude Code 에 붙여 줘.
+팀 메모 보드를 내 환경에 붙여 줘. 설명서에 하는 법이 다 있어:
 
-${paste}
+  ${api}/help
 
-설명서를 먼저 읽고, 시키는 대로 설치한 다음, 토큰이 맞는지 검증까지 해 줘.
+내 토큰(필요하면 이 값): ${token.token}
 ----------------------------------------------------------------
 
-에이전트가 스킬을 깔고 토큰을 ~/.config/baro-memo/env (권한 600) 에 넣고, 아무것도 쓰지 않는
-방법으로 값이 맞는지 확인합니다. 사람이 손으로 할 절차는 없습니다.
+**넘겨줄 것은 저 주소 하나입니다.** 설명서가 에이전트에게 "스킬을 직접 설치하라"까지 지시하고,
+에이전트가 토큰을 ~/.config/baro-memo/env (권한 600) 에 넣고, 아무것도 쓰지 않는 방법으로 값이
+맞는지 확인합니다. 사람이 손으로 칠 명령은 없습니다.
 
 ■ 이 토큰이 하는 일
 

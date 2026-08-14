@@ -382,7 +382,9 @@ test("메시지에는 팀원이 실제로 필요한 것이 전부 들어 있다"
   assert.ok(text.includes(TOKEN.user), "누구에게 보내는 것인지");
   // 주소는 **서버가 알려 준 것**(RELEASE_BASE_URL)이다. shim 의 health 가 그 값을 준다.
   assert.ok(text.includes("http://board.example/memo/api/help"), "규약 정본의 주소");
-  assert.ok(text.includes("curl -fsSL http://board.example/memo/install.sh | sh"), "설치 한 줄");
+  // 설치 명령은 **옮겨 적지 않는다.** 팀원에게 줄 것은 주소 하나이고, 설치 절차의 정본은
+  // help 문서다 — 여기 복사해 두면 두 벌이 되어 한쪽만 낡는다.
+  assert.equal(text.includes("install.sh"), false, "설치 절차는 help 가 정본이다");
   // 관리자 페이지 주소는 넣지 않는다 — 받는 사람에게는 열리지 않는 문이고, 안내는 그 사람이
   // 실제로 할 수 있는 것만 담아야 한다.
   assert.equal(text.includes("/admin/"), false);
@@ -412,6 +414,7 @@ test("메시지는 한국어와 영어 중에 고른다", async () => {
   assert.match(english, /you are invited to the team board/);
   assert.ok(english.includes(TOKEN.token), "언어가 바뀌어도 토큰은 그대로다");
   assert.ok(english.includes("http://board.example/memo/api/help"));
+  assert.equal(english.includes("install.sh"), false, "영문판도 절차를 옮겨 적지 않는다");
   assert.match(page.node("#invite-title").textContent, /Invite for paimon/);
   assert.equal(page.store.get("baro-memo-invite-lang"), "en", "다음 방문에도 같은 언어로");
 
@@ -451,7 +454,7 @@ test("메시지는 고칠 수 있고, 고친 그대로 복사된다", async () =
 test("메시지가 AI 에게 시킬 말과 쓰는 법을 담는다 — 값만 던지지 않는다", async () => {
   const { value: text } = (await invitePage()).node("#invite-text");
   // 붙여 넣을 블록과, 왜 쓸 만한지가 같이 있어야 초대다.
-  for (const must of ["대화창에 그대로 붙여", "검색", "댓글", "done", "영어"]) {
+  for (const must of ["대화창에 아래를 그대로 붙여", "주소 하나", "검색", "댓글", "done", "영어"]) {
     assert.ok(text.includes(must), `안내에 "${must}" 대목이 없습니다`);
   }
   assert.ok(text.includes("공유 채널에 그대로 붙여 넣지 마세요"), "값이 사람마다 다르다는 주의");
