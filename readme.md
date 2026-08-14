@@ -26,6 +26,7 @@ apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   help/          AI 에이전트용 사용 설명서 (영문) — GET /api/help 로 서빙
   test/          node --test (75 tests)
 apps/admin/      관리자 페이지 — 토큰 발급/폐기 + 보드 열람. 무빌드 정적 (public/)
+  test/          브라우저 없이 도는 DOM 검사 (23) — 최소 DOM 을 심어 app.js 를 그대로 실행한다
 skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙한다
 scripts/         migrate-from-calrory.mjs · admin-token.mjs · install-skill.sh
 deploy/          nginx-baro-memo.conf — web_pub server 블록에 include
@@ -40,7 +41,7 @@ DB 는 저장소 밖에 둡니다 — 운영 호스트는 `/mnt/data/baro_memo_d
 
 ```bash
 pnpm start     # = node apps/backend/src/server.mjs
-pnpm test      # node --test, 75개
+pnpm test      # node --test, 98개 (백엔드 75 + 관리자 페이지 23)
 ```
 
 설정은 `.env` 하나이고 변경은 재시작해야 반영됩니다.
@@ -71,10 +72,12 @@ git clone https://github.com/gbox3d/baro_memo.git && cd baro_memo && pnpm instal
 **3. 관리자 토큰**
 
 ```bash
-pnpm admin:token       # 파일이 없으면 만든다 (디렉터리째, 권한 600). --rotate 로 교체
+pnpm admin:token       # 값과 파일 경로를 찍는다. 없으면 만들고(디렉터리째, 권한 600) 찍는다
 ```
 
-**4. 검사** — `pnpm test`. 75개가 다 통과해야 합니다.
+> 나중에 값을 다시 볼 때도 같은 명령입니다 — 「토큰 확인」 절.
+
+**4. 검사** — `pnpm test`. 98개가 다 통과해야 합니다.
 
 **5. 프로세스**
 
@@ -121,6 +124,40 @@ curl -s localhost:<PORT>/api/version        # package.json 과 같아야 한다
 | `/memo/api/memos` | 보드 — 요약 색인(`?status=`·`?q=`·`?author=`·`?user=`·`?limit=`·`?full=1`) |
 | `/memo/install.sh` | 팀원 기기에 스킬 까는 한 줄 (`curl -fsSL … \| sh`) |
 | `/memo/skill/` | 스킬 원문 — 돌고 있는 서버와 같은 판 |
+
+## 토큰 확인
+
+**값을 보는 곳**과 **그 값이 맞는지 보는 곳**이 다릅니다. 서버는 어느 쪽도 되읊어 주지 않고
+거절 코드로만 답합니다.
+
+**관리자 토큰의 값** — `pnpm admin:token`. 값과 **읽어 온 파일 경로**를 같이 찍습니다. 경로를
+외워 `cat` 하는 절차를 없애려는 것이자, 기동 로그의 `admin=configured (…)` 와 같은 경로인지
+맞춰 보는 수단입니다 — 고친 파일과 서버가 읽은 파일이 갈라진 것이 이 종류 설정의 가장 흔한
+사고입니다. `--rotate` 는 확인이 아니라 교체이고, 옛 값은 그 순간 죽습니다.
+
+**팀원의 쓰기 토큰 값** — 관리자 페이지 `/memo/admin/`. 목록에는 앞 10자만 보이고, 한 줄을
+고르면 전문과 복사 버튼이 나옵니다. 서버가 값을 보관하므로 **잃어버린 토큰은 다시 발급할 것
+없이 다시 꺼내 보면 됩니다.** 재발급은 사람이 바뀌거나 값이 샜을 때 하는 일입니다.
+
+**가진 값이 맞는가** — 물어보는 것이 확인입니다. 인증이 본문 검사보다 **먼저** 돌기 때문에,
+아무것도 쓰지 않는 요청 하나로 갈라집니다.
+
+```bash
+T=<확인할 값>
+curl -s -X POST <보드>/api/memos -H "x-memo-token: $T" \
+  -H 'content-type: application/json' -d '{}'                 # 쓰기 토큰
+curl -s -o /dev/null -w '%{http_code}\n' \
+  -H "x-memo-token: $T" <보드>/api/admin/tokens               # 관리자 토큰
+```
+
+| 돌아온 것 | 뜻 | 고칠 사람 |
+|---|---|---|
+| `empty_body` 400 / `200` | 맞다. 보드에는 아무것도 남지 않는다 | — |
+| `memo_token_invalid` · `admin_token_invalid` 401 | 토큰은 설정돼 있는데 이 값이 아니다 (틀렸거나 폐기됨 — 폐기는 유예 없이 즉시) | 가진 쪽 |
+| `no_tokens_issued` · `admin_token_unset` 503 | 이 배포에 값이 0개다. 어떤 값을 넣어도 안 된다 | 운영자 |
+
+팀원 기기의 값은 `~/.config/baro-memo/env`(권한 600) 에 있고 스킬이 이 프로브로 검증합니다.
+확인할 때도 값을 명령줄에 직접 박지 않고 변수로 넘기는 이유는 셸 히스토리와 대화록입니다.
 
 ## 에이전트에게 알려줄 것
 

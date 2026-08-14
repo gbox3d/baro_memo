@@ -8,8 +8,18 @@
 </head>
 <body>
 <header>
-  <h1>baro memo <span>admin</span></h1>
+  <!-- 판 번호는 돌고 있는 백엔드에게 묻는다(GET /api/version). 정적 파일에 박으면 페이지와
+       서버가 갈라진 순간부터 거짓말이 되고, 그 거짓말을 잡으려고 보는 자리가 여기다. -->
+  <h1>baro memo <span>admin</span> <span id="ver" title="돌고 있는 백엔드 판"></span></h1>
   <div class="conn">
+    <!-- 표시 지역. 저장은 UTC 하나뿐이고 이 선택은 화면에만 걸린다.
+         자주 쓰는 항목은 여기 박아 둔다 — app.js 가 IANA 전체를 뒤에 덧붙이지만, 그게
+         실패해도 상자는 보이고 동작해야 한다. 빈 <select> 는 실오라기로 접혀 "안 보인다". -->
+    <select id="tz" title="시간대 — 표시만 바뀝니다. 저장은 UTC 입니다">
+      <option value="">브라우저 기본</option>
+      <option value="UTC">UTC</option>
+      <option value="Asia/Seoul">Asia/Seoul</option>
+    </select>
     <input id="admin-token" type="password" placeholder="관리자 토큰" autocomplete="off">
     <span id="conn-state" class="dot" title="관리자 토큰 확인 상태"></span>
   </div>
@@ -24,7 +34,7 @@
       <form id="issue-form">
         <input id="issue-user" placeholder="사용자명" autocomplete="off" required>
         <input id="issue-note" placeholder="메모 (선택)" autocomplete="off">
-        <button type="submit">발급</button>
+        <button id="issue-submit" type="submit">발급</button>
       </form>
       <div id="token-detail" class="detail" hidden>
         <code id="token-value"></code>
@@ -42,7 +52,8 @@
   <section id="memos">
     <h2>보드</h2>
 
-    <!-- 속성창: 선택된 메모의 본문과 쪽 넘김. 액션은 리스트 위에 둔다 — 리스트는 상태만 보인다.
+    <!-- 속성창: 쪽 넘김. 액션은 리스트 위에 둔다 — 리스트는 상태만 보인다.
+         본문은 팝업으로 뺐다(아래 dialog) — 표 위에 펼치면 긴 글이 리스트를 밀어낸다.
          이 페이지는 보드를 읽기만 한다 — 쓰기는 에이전트의 일이다. -->
     <div class="panel">
       <div class="pager">
@@ -50,7 +61,6 @@
         <span id="memo-range"></span>
         <button id="memo-next" type="button" disabled>▶</button>
       </div>
-      <pre id="memo-detail" hidden></pre>
     </div>
 
     <table id="memo-list">
@@ -59,6 +69,16 @@
     </table>
   </section>
 </main>
+
+<!-- 본문 팝업. <dialog> 를 쓰는 이유는 공짜로 따라오는 것들 때문이다: 배경 가림막, Esc 로 닫기,
+     포커스 가둠. 화면의 80% 를 차지하고 본문만 세로로 구른다. -->
+<dialog id="memo-dialog">
+  <header>
+    <span id="memo-dialog-title"></span>
+    <button id="memo-dialog-close" type="button" title="닫기 (Esc)">닫기</button>
+  </header>
+  <pre id="memo-detail"></pre>
+</dialog>
 
 <footer><span id="status"></span></footer>
 <script src="app.js"></script>

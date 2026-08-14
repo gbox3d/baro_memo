@@ -15,36 +15,54 @@ body {
   font: 14px/1.5 system-ui, -apple-system, "Noto Sans KR", sans-serif;
 }
 header, main, footer { max-width: 960px; margin: 0 auto; padding: 0 16px; }
-header { display: flex; align-items: center; justify-content: space-between; padding-top: 20px; }
+/* 좁은 화면(터널로 들어오는 휴대폰)에서 줄을 접는다. 접지 않으면 flex 가 칸을 눌러
+   토큰 입력과 시간대 선택이 손톱만 해진다 — 보이는데 못 누르는 상태가 된다. */
+header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding-top: 20px; }
 h1 { font-size: 18px; margin: 0; }
 h1 span { color: var(--muted); font-weight: 400; }
+#ver { font-size: 12px; font-variant-numeric: tabular-nums; }
 h2 { font-size: 14px; margin: 28px 0 8px; color: var(--muted); font-weight: 600; }
 
-.conn { display: flex; align-items: center; gap: 8px; }
-.conn input { width: 220px; }
+.conn { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.conn input { width: 220px; max-width: 100%; }
+/* zone 이름은 길다(America/Argentina/…) — 늘어나서 토큰 칸을 밀지 않게 위를 자르고,
+   flex 가 줄이지 못하게 아래를 박는다. */
+.conn select { min-width: 9em; max-width: 200px; flex: 0 0 auto; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
 .dot.ok { background: var(--ok); }
 .dot.bad { background: var(--danger); }
 
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
-.panel form { display: flex; gap: 8px; }
+/* 헤더에 넣은 그 방어와 같다 — 접지 않으면 좁은 화면에서 발급 폼이 패널 밖으로 나간다. */
+.panel form { display: flex; gap: 8px; flex-wrap: wrap; }
+.panel form input { min-width: 0; }
 /* 쪽 넘김. 범위 표시가 가운데에서 흔들리지 않게 tabular-nums 로 자릿수를 고정한다. */
 .pager { display: flex; align-items: center; gap: 8px; }
 .pager button { padding: 4px 10px; line-height: 1; }
 .pager button:disabled { opacity: .35; cursor: default; }
 .pager span { color: var(--muted); font-variant-numeric: tabular-nums; }
 
-.detail { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+/* display 는 hidden 이 아닐 때만 준다. `[hidden]` 의 숨김 규칙은 **UA 스타일시트**라
+   저자 스타일시트의 display 에 캐스케이드에서 진다 — 그냥 `.detail` 에 flex 를 주면
+   JS 가 hidden 을 켜도 화면에서 안 사라진다. 아래 #memo-detail 이 멀쩡히 숨는 것은
+   그 규칙이 display 를 안 건드리기 때문이지, hidden 이 잘 돌기 때문이 아니다. */
+.detail { align-items: center; gap: 8px; margin-top: 10px; }
+.detail:not([hidden]) { display: flex; }
 .detail code {
   flex: 1; padding: 6px 8px; background: var(--bg); border: 1px solid var(--line);
   border-radius: 4px; overflow-x: auto; white-space: nowrap;
 }
 
-input, button {
+input, button, select {
   font: inherit; color: inherit; background: var(--bg);
   border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px;
 }
 button { cursor: pointer; }
+/* 터치 기기에서 계산 폰트가 16px 미만이면 iOS 사파리가 칸을 탭할 때마다 화면을 당기고
+   되돌리지 않는다. viewport 에 maximum-scale 을 박아 막는 쪽은 쓰지 않는다 — 확대는 사용자 것이다. */
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px; }
+}
 button[type="submit"] { border-color: var(--accent); color: var(--accent); }
 button.danger { border-color: var(--danger); color: var(--danger); }
 
@@ -62,7 +80,26 @@ td .st { font-size: 12px; }
 .st.done, .st.revoked { color: var(--muted); }
 .st.active { color: var(--ok); }
 
-/* 쪽 넘김 바로 아래에 붙으므로 열렸을 때만 사이를 띄운다(닫히면 :not 이 안 걸린다). */
-#memo-detail { margin: 0; white-space: pre-wrap; font: 13px/1.5 ui-monospace, monospace; }
-#memo-detail:not([hidden]) { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+/* 본문 팝업. 화면의 80% 를 차지하고, 머리(제목·닫기)는 붙박이고 본문만 구른다.
+   display 는 **열렸을 때만** 준다 — `dialog:not([open])` 의 숨김도 UA 규칙이라, 그냥
+   `#memo-dialog { display: flex }` 로 두면 닫힌 팝업이 화면에 눌러앉는다(.detail 과 같은 함정). */
+#memo-dialog {
+  width: 80vw; height: 80vh; max-width: 80vw; max-height: 80vh;
+  padding: 0; overflow: hidden;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+#memo-dialog[open] { display: flex; flex-direction: column; }
+#memo-dialog::backdrop { background: rgba(0, 0, 0, .5); }
+#memo-dialog header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+#memo-dialog-title { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#memo-dialog-close { flex: 0 0 auto; min-height: 36px; }
+#memo-detail {
+  margin: 0; padding: 12px; overflow-y: auto; flex: 1;
+  white-space: pre-wrap; word-break: break-word;
+  font: 13px/1.6 ui-monospace, monospace;
+}
 footer { padding: 16px; color: var(--muted); font-size: 12px; }
