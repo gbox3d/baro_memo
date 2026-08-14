@@ -29,7 +29,10 @@ apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
                    admin-token.mjs (관리자 토큰의 출처 — 파일이 정본)
   help/            에이전트용 영문 설명서 — index.md · memo.md · tokens.md
   test/            node --test, 75개
-apps/admin/public/  관리자 페이지 (무빌드 정적) — 토큰 발급/폐기 + 보드 열람(한 쪽 10건)
+apps/admin/      관리자 페이지 (무빌드 정적)
+  public/          index.html · app.js · style.css — 토큰 발급/폐기, 보드 열람(한 쪽 10건),
+                   본문 팝업(<dialog>), 표시 시간대 선택, 백엔드 판 표시
+  test/            dom-shim.mjs (node:vm + 최소 DOM) · admin-page.test.mjs — 23개
 scripts/         migrate-from-calrory.mjs — 원본 memo.db 이관 (id 보존, 멱등)
                  admin-token.mjs — 관리자 토큰 확인·생성·교체 (경로를 외우지 않게)
                  install-skill.sh — 팀원 기기에 스킬+CLAUDE.md 규칙 설치 (멱등)
@@ -53,7 +56,7 @@ localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는�
 
 ```bash
 pnpm start                 # = node apps/backend/src/server.mjs
-pnpm test                  # node --test, 75개
+pnpm test                  # node --test, 98개 (백엔드 75 + 관리자 페이지 23)
 pnpm migrate:calrory       # baro_calrory 의 memo.db 이관
 pnpm admin:token           # 관리자 토큰 확인 (없으면 생성) · --rotate 로 교체
 pm2 restart baro-memo --update-env
@@ -68,7 +71,9 @@ pm2 restart baro-memo --update-env
 
 ## Tests
 
-`node --test` 75개, 다섯 파일:
+`node --test` 98개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다.
+
+백엔드 75개, 다섯 파일:
 
 - `memo-store.test.mjs` — 저장소 불변식, user/updatedBy 스탬프, 요약·total·기본 limit,
   **FTS5 트리거 동기화**(insert/update/delete)와 기존 DB 색인 backfill
@@ -77,6 +82,17 @@ pm2 restart baro-memo --update-env
 - `admin-token.test.mjs` — 토큰 출처의 우선순위와 읽기 실패 처리
 - `help-doc.test.mjs` — help 문서와 코드의 **양방향** 검사(유령 경로 금지·누락 금지),
   영문 단일 언어, 쿼리 힌트와 `LIST_PARAMS` 일치
+
+관리자 페이지 23개, `apps/admin/test/`:
+
+- `dom-shim.mjs` — 브라우저가 없으므로 최소 DOM 을 심어 `app.js` 를 `node:vm` 에서 **그대로**
+  실행한다. index.html 에서 정적 `<option>`·버튼 라벨을 읽어 오므로 HTML↔JS 계약도 같이 걸린다.
+  **없는 API 를 있다고 흉내 내지 않는 것이 이 shim 의 규칙이다** — 기본값이 평문 HTTP(클립보드
+  없음)인 이유이고, 그 흉내 때문에 복사 버튼이 검사를 통과하며 화면에서 죽었다.
+- `admin-page.test.mjs` — 시간대 표시(지역별 벽시계·자정 경계·죽은 zone), 백엔드 판 표시와
+  실패 표시, 복사 세 경로(표준 API·execCommand·선택만), 발급 중복 제출 잠금, 본문 팝업 여닫이,
+  그리고 **CSS 계약**: `[hidden]`·`[open]` 로 여닫는 요소에 저자 스타일시트가 `display` 를 주면
+  실패한다(shim 은 CSS 를 못 보므로 글자로 대조한다)
 
 ## Notes
 

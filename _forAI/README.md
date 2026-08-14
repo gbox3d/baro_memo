@@ -31,8 +31,11 @@
 
 - 저장소 경로: `/home/gblab-dgx-01/works/baro_memo`
 - 대상 플랫폼: Node 24 + pm2 (`baro-memo`), 사내망. 외부 접점은 nginx `/memo/` 와 터널
-- 현재 버전: 0.3.0 — 전문 검색(FTS5) 도입, DB 를 외장 볼륨으로 이전
+- 현재 버전: 0.3.1 — 관리자 토큰을 DB 옆으로, 보드 쪽 넘김. 이후 문서·관리자 페이지 작업은
+  버전을 올리지 않았다(백엔드 계약이 그대로다)
 - 메인 엔트리포인트: `apps/backend/src/server.mjs` (`pnpm start`)
+- 관리자 페이지: `apps/admin/public/` — nginx 가 디스크에서 바로 서빙한다(빌드도 재시작도 없다).
+  검사는 `apps/admin/test/` 에서 브라우저 없이 돈다
 - DB: `/mnt/data/baro_memo_db/memo.db` — 저장소 밖이다. `.env` 의 `MEMO_DB` 가 정본
 - 분리 원본: `/home/gblab-dgx-01/works/baro_calrory` 의 memo 축 (분리 완료)
 
