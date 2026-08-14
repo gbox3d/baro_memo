@@ -10,54 +10,16 @@
 //
 // 부분 갱신(상태만 done)이 잦은 데이터라 JSON 파일 통째 재작성이 아니라 SQLite 다 — 겹치는
 // 두 갱신에서 뒤엣것이 앞엣것을 통째로 지우는 사고를 스키마 수준에서 없앤다(원본의 결정).
+import { fail, text, toId } from "./fields.mjs";
+import { ensureSchema } from "./schema.mjs";
+
 export const MEMO_STATUSES = Object.freeze(["open", "doing", "done"]);
 
-// AUTOINCREMENT: 삭제된 id 를 재사용하지 않는다. 재사용하면 "3번 메모"라고 적어 둔 외부
-// 기록이 어느 날 다른 메모를 가리킨다.
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS memo (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    title      TEXT NOT NULL DEFAULT '',
-    body       TEXT NOT NULL,
-    status     TEXT NOT NULL DEFAULT 'open',
-    author     TEXT NOT NULL DEFAULT '',
-    user       TEXT NOT NULL DEFAULT '',
-    updated_by TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-`;
-
-// 전문 검색. 이 보드는 프로젝트를 가로질러 읽히는 물건이라, 찾는 쪽은 저장소도 제목도 모르고
-// **증상 문자열**(`X-Forwarded-Prefix`, `no_tokens_issued`) 하나만 안다. 제목 검색으로는 못 잡는다.
-//
-//   content='memo'  : 본문을 복사하지 않는다. FTS5 는 색인만 갖고 텍스트는 memo 를 참조한다 —
-//                     복사하면 20000자짜리 정본이 두 벌이 되고, 어느 쪽이 진짜인가가 생긴다.
-//   tokenize=trigram: 3글자 창을 색인한다. `memo_store.mjs` 같은 식별자를 부분으로 잡고 한글도
-//                     걸린다. 값은 색인 크기와 순위의 무딤 — 못 찾는 것보다 낫다는 판단이다.
-//                     대신 **3글자 미만 질의는 원리적으로 불가능**하다(toMatchQuery 가 거절한다).
-const FTS_SCHEMA = `
-  CREATE VIRTUAL TABLE memo_fts USING fts5(
-    title, body, content='memo', content_rowid='id', tokenize='trigram'
-  );
-  -- 외부 콘텐츠 색인은 자동으로 따라오지 않는다. 세 트리거가 동기화의 전부다.
-  CREATE TRIGGER IF NOT EXISTS memo_fts_ai AFTER INSERT ON memo BEGIN
-    INSERT INTO memo_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
-  END;
-  CREATE TRIGGER IF NOT EXISTS memo_fts_ad AFTER DELETE ON memo BEGIN
-    INSERT INTO memo_fts(memo_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
-  END;
-  CREATE TRIGGER IF NOT EXISTS memo_fts_au AFTER UPDATE ON memo BEGIN
-    INSERT INTO memo_fts(memo_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
-    INSERT INTO memo_fts(rowid, title, body) VALUES (new.id, new.title, new.body);
-  END;
-`;
+// 스키마(memo·comment 와 두 색인)는 schema.mjs 가 정본이다 — 목록의 commentCount 와 검색이
+// 두 테이블에 걸쳐 있어, 한쪽만 세우면 이 파일의 질의가 no such table 로 죽는다.
 
 // trigram 의 하한. 이보다 짧은 질의는 색인에 대응하는 항목 자체가 없다.
 export const SEARCH_MIN_CHARS = 3;
-
-// 길이 상한. 토큰 뒤에 있어도 **토큰을 아는 사람의 실수**(로그 한 뭉치 붙여넣기)는 못 막는다.
-const LIMITS = Object.freeze({ title: 200, body: 20000, author: 100, status: 100 });
 
 // 목록의 기본은 **요약**이다. 이 보드는 모든 세션이 작업 시작 전에 한 번씩 읽는 표면이라,
 // 전문을 기본값으로 실으면 게시물 수에 비례해 모든 세션의 토큰이 새어 나간다(4건에 9.5KB
@@ -66,20 +28,6 @@ export const PREVIEW_CHARS = 200;
 // 기본 상한이 없으면 "언젠가 느려지는" 라우트가 된다. total 을 늘 함께 주므로 잘렸는지는
 // 소비자가 안다 — 조용한 절단이 아니다.
 export const LIST_LIMIT = Object.freeze({ default: 50, max: 200 });
-
-function fail(code, message) {
-  return Object.assign(new Error(message), { code });
-}
-
-// 문자열 필드 정규화 — 트림 + 상한. 숫자·객체는 문자열로 뭉개지 않고 거절한다:
-// body 에 객체가 들어오면 "[object Object]" 가 저장되고 그건 조용한 데이터 손실이다.
-function text(value, field) {
-  if (value === undefined || value === null) return "";
-  if (typeof value !== "string") throw fail("invalid_field", `${field} must be a string.`);
-  const s = value.trim();
-  if (s.length > LIMITS[field]) throw fail("too_long", `${field} exceeds the cap (${LIMITS[field]} chars).`);
-  return s;
-}
 
 function status(value) {
   const s = text(value, "status") || "open";
@@ -90,10 +38,7 @@ function status(value) {
 }
 
 // URL 조각을 id 로. 라우터가 `/api/memos/<무엇이든>` 을 받으므로 여기서 한 번에 거른다.
-export function toMemoId(value) {
-  const n = Number(value);
-  return Number.isInteger(n) && n > 0 ? n : null;
-}
+export const toMemoId = toId;
 
 function toMemo(row) {
   if (!row) return null;
@@ -107,6 +52,9 @@ function toMemo(row) {
     updatedBy: row.updated_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // 댓글은 **개수만** 싣는다. 목록이든 한 건이든, 댓글 본문은 그 메모의 댓글 경로로 받는다 —
+    // 목록에 전문을 싣지 않는 것과 같은 이유이고, 한 건에서도 대화가 길어지면 같은 세금이 된다.
+    commentCount: row.comment_count ?? 0,
   };
 }
 
@@ -124,8 +72,35 @@ function toSummary(row) {
     updatedBy: row.updated_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    commentCount: row.comment_count ?? 0,
   };
 }
+
+// 메모마다 붙는 댓글 수. 상관 서브쿼리 한 줄이면 되는 규모다(보드는 수천 건 단위이고
+// comment_by_memo 색인이 있다). 목록에서 이 값을 빼면 "댓글이 있는지" 를 알려고 게시물마다
+// 한 번씩 더 부르게 되고, 그게 정확히 목록을 요약 색인으로 만든 이유의 반대다.
+const COMMENT_COUNT = "(SELECT COUNT(*) FROM comment WHERE comment.memo_id = memo.id) AS comment_count";
+
+// 검색 적중 한 벌. 두 색인(메모 제목·본문 / 댓글 본문)의 적중을 합치고, 메모마다 관련도가
+// 가장 좋은 한 줄만 남긴다(ROW_NUMBER). 한 메모가 본문과 댓글 양쪽에서 걸리면 결과가 두
+// 줄이 되는데, 목록의 소비자에게 그건 같은 메모가 두 번 나오는 것으로 보인다.
+//
+// bm25 값은 테이블이 다르면 엄밀히 비교 가능한 수치가 아니다. 그래도 순서를 정하는 데는 쓸
+// 만하고, 대안(한쪽을 늘 앞에 두기)은 "답이 댓글에만 있는 메모"를 구조적으로 뒤로 민다.
+const HIT_SOURCE = `(
+  SELECT memo_id, rank, snippet, matched_in,
+         ROW_NUMBER() OVER (PARTITION BY memo_id ORDER BY rank) AS rn
+  FROM (
+    SELECT memo_fts.rowid AS memo_id, bm25(memo_fts) AS rank,
+           snippet(memo_fts, 1, '[', ']', '…', 12) AS snippet, 'memo' AS matched_in
+    FROM memo_fts WHERE memo_fts MATCH ?
+    UNION ALL
+    SELECT comment.memo_id AS memo_id, bm25(comment_fts) AS rank,
+           snippet(comment_fts, 0, '[', ']', '…', 12) AS snippet, 'comment' AS matched_in
+    FROM comment_fts JOIN comment ON comment.id = comment_fts.rowid
+    WHERE comment_fts MATCH ?
+  )
+)`;
 
 // LIKE 의 와일드카드를 사용자 입력에서 무력화한다. 안 하면 `?author=%` 한 글자가 전체 일치가
 // 되고, 밑줄이 든 값을 찾는 사람은 엉뚱한 것까지 받는다. SQL 은 ESCAPE 로 받는다.
@@ -153,13 +128,7 @@ export function toMatchQuery(value) {
 export class MemoStore {
   constructor(db) {
     this.db = db;
-    this.db.exec(SCHEMA);
-    // 색인이 없을 때만 세우고 기존 행을 한 번에 채운다('rebuild'). 매 기동마다 rebuild 하면
-    // 보드가 커진 뒤 시작이 느려지고, 그건 아무도 안 보는 곳에서 느려지는 종류의 비용이다.
-    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'memo_fts'").get()) {
-      this.db.exec(FTS_SCHEMA);
-      this.db.exec("INSERT INTO memo_fts(memo_fts) VALUES ('rebuild')");
-    }
+    ensureSchema(db);
   }
 
   // 목록 — 걸러서, 잘라서, 요약으로. 인자는 라우터가 쿼리스트링에서 검증해 넘긴 것만 들어온다.
@@ -175,12 +144,13 @@ export class MemoStore {
       full = false, limit = LIST_LIMIT.default, offset = 0,
     } = options;
 
-    // q 가 있으면 색인과 조인한다. 이때 title/body 가 양쪽 테이블에 다 있으므로 칼럼은 전부
-    // memo. 로 못 박는다 — 안 그러면 ambiguous 로 죽거나, 더 나쁘게는 색인 사본을 읽는다.
-    const from = q ? "memo_fts JOIN memo ON memo.id = memo_fts.rowid" : "memo";
+    // q 가 있으면 두 색인(메모·댓글)의 적중을 합쳐 메모에 붙인다. 칼럼은 전부 memo. 로 못
+    // 박는다 — 안 그러면 ambiguous 로 죽거나, 더 나쁘게는 색인 사본을 읽는다.
+    const from = q ? `${HIT_SOURCE} hit JOIN memo ON memo.id = hit.memo_id` : "memo";
     const where = [];
     const params = [];
-    if (q) { where.push("memo_fts MATCH ?"); params.push(toMatchQuery(q)); }
+    // 한 메모가 본문과 댓글 양쪽에서 걸리면 두 줄이 된다. 관련도가 좋은 쪽 한 줄만 남긴다.
+    if (q) { where.push("hit.rn = 1"); params.push(toMatchQuery(q), toMatchQuery(q)); }
     if (status && status.length) {
       where.push(`memo.status IN (${status.map(() => "?").join(", ")})`);
       params.push(...status);
@@ -200,9 +170,9 @@ export class MemoStore {
     // 검색은 관련도순(bm25 는 음수이고 작을수록 좋다), 그냥 목록은 최신순. 정렬 키가 created_at
     // 이 아니라 id 인 이유: 같은 초의 두 건은 시각으로 순서가 안 선다.
     const rows = this.db.prepare(`
-      SELECT ${columns}${q ? `, snippet(memo_fts, 1, '[', ']', '…', 12) AS snippet` : ""}
+      SELECT ${columns}, ${COMMENT_COUNT}${q ? ", hit.snippet AS snippet, hit.matched_in AS matched_in" : ""}
       FROM ${from}${clause}
-      ORDER BY ${q ? "bm25(memo_fts), memo.id DESC" : "memo.id DESC"}
+      ORDER BY ${q ? "hit.rank, memo.id DESC" : "memo.id DESC"}
       LIMIT ? OFFSET ?`).all(...params, limit, offset);
 
     return {
@@ -210,13 +180,16 @@ export class MemoStore {
       memos: rows.map((row) => {
         const memo = full ? toMemo(row) : toSummary(row);
         if (row.snippet !== undefined) memo.snippet = row.snippet;
+        // 어디서 맞았는지 말해 준다. 본문에 없는 낱말로 걸린 메모를 받으면 소비자는 검색이
+        // 고장 난 줄 안다 — 답이 댓글에 있다는 것이 이 필드가 전하는 사실이다.
+        if (row.matched_in !== undefined) memo.matchedIn = row.matched_in;
         return memo;
       }),
     };
   }
 
   get(id) {
-    return toMemo(this.db.prepare("SELECT * FROM memo WHERE id = ?").get(id));
+    return toMemo(this.db.prepare(`SELECT memo.*, ${COMMENT_COUNT} FROM memo WHERE id = ?`).get(id));
   }
 
   counts() {

@@ -12,7 +12,7 @@ const PAGE = 10;
 // bodies: 목록은 본문을 싣지 않는다(요약 색인이다). 펼친 메모의 전문만 id 로 받아 여기 담아
 // 둔다 — 같은 메모를 다시 펼칠 때 또 부르지 않게.
 const state = {
-  tokens: [], memos: [], bodies: new Map(),
+  tokens: [], memos: [], bodies: new Map(), comments: new Map(),
   offset: 0, total: 0,
   selectedToken: null, selectedMemo: null,
 };
@@ -298,6 +298,7 @@ function renderMemos() {
       <td>${esc(m.user) || "—"}</td>
       <td>${esc(m.author) || "—"}</td>
       <td>${esc(m.title) || "—"}</td>
+      <td>${m.commentCount || ""}</td>
       <td title="${esc(stampTitle(m.updatedAt))}">${esc(stamp(m.updatedAt))}</td>`;
     tr.addEventListener("click", () => selectMemo(m.id));
     return tr;
@@ -313,11 +314,42 @@ function renderMemos() {
 
   const sel = state.memos.find((m) => m.id === state.selectedMemo);
   if (!sel) { closeMemo(); return; }
-  $("#memo-dialog-title").textContent = `#${sel.id} · ${sel.status} · ${sel.title || "(제목 없음)"}`;
+  $("#memo-dialog-title").textContent = `#${sel.id} · ${sel.status} · ${sel.title || "(제목 없음)"}`
+    + (sel.commentCount ? ` · 댓글 ${sel.commentCount}` : "");
   // 전문이 아직 없으면 미리보기로 자리를 채운다 — 빈 칸은 "본문이 없다"로 읽힌다.
   const full = state.bodies.get(sel.id);
   const text = full ?? `${sel.bodyPreview}${sel.bodyLength > sel.bodyPreview.length ? "…" : ""}`;
   $("#memo-detail").textContent = text + (sel.updatedBy ? `\n\n— last write: ${sel.updatedBy}` : "");
+  renderComments(sel.id);
+}
+
+// 댓글은 본문과 함께 온다(GET memos/:id). 여기서 문자열을 조립하지 않고 노드로 세우는 이유는
+// 본문에 무엇이 들었는지 모르기 때문이다 — textContent 는 무엇이 들어와도 글자로만 남는다.
+function renderComments(memoId) {
+  const box = $("#memo-comments");
+  const list = state.comments.get(memoId) || [];
+  box.hidden = list.length === 0; // 빈 구획은 "댓글 기능이 고장 났나"로 읽힌다
+  box.replaceChildren(...list.map((c) => {
+    const item = document.createElement("article");
+    item.className = "cmt";
+
+    const head = document.createElement("div");
+    head.className = "cmt-head";
+    const who = document.createElement("span");
+    // user 는 서버가 토큰에서 찍은 사람, author 는 그 사람의 어느 세션인가다.
+    who.textContent = c.author ? `${c.user} · ${c.author}` : c.user || "—";
+    const when = document.createElement("time");
+    when.textContent = stamp(c.createdAt);
+    when.title = stampTitle(c.createdAt);
+    head.append(who, when);
+
+    const body = document.createElement("pre");
+    body.className = "cmt-body";
+    body.textContent = c.body;
+
+    item.append(head, body);
+    return item;
+  }));
 }
 
 // 팝업 여닫기. showModal 이 없는 옛 판에서는 open 속성만 세워 비모달로 띄운다 — 가림막과
@@ -357,7 +389,10 @@ async function selectMemo(id) {
   openMemo();
   if (state.bodies.has(id)) return;
   try {
-    state.bodies.set(id, (await call(`memos/${id}`)).memo.body);
+    // 한 건은 본문과 댓글을 같이 준다 — 한 번 받아 둘 다 캐시한다.
+    const one = await call(`memos/${id}`);
+    state.bodies.set(id, one.memo.body);
+    state.comments.set(id, one.comments || []);
     if (state.selectedMemo === id) renderMemos();
   } catch (err) { sayError(err); }
 }
@@ -374,8 +409,9 @@ $("#memo-next").addEventListener("click", () => turnPage(1));
 
 async function loadMemos() {
   try {
-    // 새로고침은 캐시를 버린다 — 남겨 두면 남이 고친 본문을 옛날 것으로 보여 준다.
+    // 새로고침은 캐시를 버린다 — 남겨 두면 남이 고친 본문이나 새로 달린 댓글을 놓친다.
     state.bodies.clear();
+    state.comments.clear();
     // 요약 색인 한 쪽만 받는다. 보드가 커져도 이 페이지가 무거워지지 않는다.
     const page = await call(`memos?limit=${PAGE}&offset=${state.offset}`);
     // 마지막 쪽에서 메모가 지워지면 offset 이 total 을 넘어 빈 화면이 된다 — 한 쪽 당겨 다시.

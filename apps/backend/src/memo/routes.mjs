@@ -15,6 +15,7 @@
 // 반환 규약: 이 축의 경로가 아니면 null.
 import { json } from "../core/http.mjs";
 import { LIST_LIMIT, MEMO_STATUSES, toMemoId } from "./memo-store.mjs";
+import { toCommentId } from "./comment-store.mjs";
 
 // 헤더 두 곳: 전용 `x-memo-token` 과 표준 `Authorization: Bearer`. 도구 사정이다 — 일부
 // 클라이언트는 Authorization 을 자기 인증에 이미 쓴다.
@@ -98,7 +99,7 @@ export function parseListQuery(query) {
 }
 
 export function createMemoRoutes(ctx) {
-  const { memoStore, tokenStore } = ctx;
+  const { memoStore, tokenStore, commentStore } = ctx;
 
   return async function handleMemo(method, pathname, query = null, body = {}, headers = {}) {
     if (pathname !== "/api/memos" && !pathname.startsWith("/api/memos/")) return null;
@@ -144,6 +145,43 @@ export function createMemoRoutes(ctx) {
       catch (error) { return badRequest(error); }
     }
 
+    // ---- 댓글 -----------------------------------------------------------------------------
+    //
+    // 메모 밑에 걸린다(`/api/memos/:memoId/comments`). 댓글만 따로 도는 최상위 축을 만들지
+    // 않는 이유: 댓글은 늘 어떤 메모의 것이고, 최상위로 두면 "어느 메모의?"를 매번 되물어야 한다.
+    // 쓰기 문턱은 위에서 이미 걸렸다 — 이 아래는 user 가 토큰에서 역산된 뒤다.
+    const comments = pathname.match(/^\/api\/memos\/([^/]+)\/comments$/);
+    if (comments) {
+      const memoId = toMemoId(comments[1]);
+      const memo = memoId === null ? null : memoStore.get(memoId);
+      // 없는 메모에 다는 댓글은 조용히 떠돌게 두지 않는다 — 메모 축과 같은 404.
+      if (!memo) return json(404, { error: "No such memo.", code: "memo_not_found", id: comments[1] });
+
+      if (method === "GET") {
+        const list = commentStore.listFor(memoId);
+        return json(200, { count: list.length, memoId, comments: list });
+      }
+      if (method === "POST") {
+        try { return json(201, { comment: commentStore.add(memoId, body, user) }); }
+        catch (error) { return badRequest(error); }
+      }
+      return json(405, { error: "Method not supported on this path.", method, pathname });
+    }
+
+    const commentItem = pathname.match(/^\/api\/memos\/([^/]+)\/comments\/([^/]+)$/);
+    if (commentItem) {
+      const commentId = toCommentId(commentItem[2]);
+      const comment = commentId === null ? null : commentStore.get(commentId);
+      // 다른 메모의 댓글 id 로 지우려는 요청은 "그런 댓글은 없다"다. 경로가 사실과 다르면
+      // 지워 주는 쪽이 더 위험하다 — 지운 사람은 자기가 무엇을 지웠는지 모른다.
+      if (!comment || String(comment.memoId) !== String(toMemoId(commentItem[1]))) {
+        return json(404, { error: "No such comment.", code: "comment_not_found", id: commentItem[2] });
+      }
+      // 수정은 없다(append-only). 인용되는 글이 조용히 바뀌면 인용이 무의미해진다.
+      if (method === "DELETE") return json(200, { deleted: commentStore.remove(commentId), id: commentId });
+      return json(405, { error: "Method not supported on this path.", method, pathname });
+    }
+
     const item = pathname.match(/^\/api\/memos\/([^/]+)$/);
     if (item) {
       const id = toMemoId(item[1]);
@@ -152,7 +190,9 @@ export function createMemoRoutes(ctx) {
       const memo = id === null ? null : memoStore.get(id);
       if (!memo) return json(404, { error: "No such memo.", code: "memo_not_found", id: item[1] });
 
-      if (method === "GET") return json(200, { memo });
+      // 한 건은 **문서**다. 댓글을 같이 실어 주지 않으면 소비자는 commentCount 를 보고 한 번 더
+      // 부른다 — 목록이 요약인 것과 달리, 여기서 아끼는 것은 아무것도 없다.
+      if (method === "GET") return json(200, { memo, comments: commentStore.listFor(id) });
 
       if (method === "PATCH") {
         try { return json(200, { memo: memoStore.update(id, body, user) }); }

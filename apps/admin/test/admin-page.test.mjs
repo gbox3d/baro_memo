@@ -188,6 +188,35 @@ test("Esc·가림막으로 닫아도 같은 자리로 돌아온다", async () =>
   assert.equal(page.dialog.open, false);
 });
 
+test("팝업에 댓글이 시간순으로 붙고, 없으면 구획 자체가 안 보인다", async () => {
+  const talked = {
+    ...MEMO, id: 13, commentCount: 2,
+    comments: [
+      { id: 1, memoId: 13, body: "먼저 온 말", user: "kim", author: "claude/a", createdAt: INSTANT },
+      { id: 2, memoId: 13, body: "나중 온 말", user: "lee", author: "", createdAt: INSTANT },
+    ],
+  };
+  const page = loadAdminPage({ memos: [talked, MEMO] });
+  await page.settled;
+  page.pickMemoRow(0);
+  await drain();
+
+  const box = page.node("#memo-comments");
+  assert.equal(box.hidden, false);
+  assert.deepEqual(box.children.map((c) => c.children[1].textContent), ["먼저 온 말", "나중 온 말"]);
+  // user 는 사람, author 는 그 사람의 세션이다. author 가 없으면 user 만 적는다.
+  assert.equal(box.children[0].children[0].children[0].textContent, "kim · claude/a");
+  assert.equal(box.children[1].children[0].children[0].textContent, "lee");
+  assert.match(page.node("#memo-dialog-title").textContent, /댓글 2/);
+
+  // 댓글 없는 메모로 옮기면 구획이 닫힌다 — 빈 구획은 "고장 났나"로 읽힌다.
+  page.node("#memo-dialog-close")._on.click();
+  page.pickMemoRow(1);
+  await drain();
+  assert.equal(page.node("#memo-comments").hidden, true);
+  assert.equal(page.node("#memo-dialog-title").textContent.includes("댓글"), false);
+});
+
 test("같은 줄을 다시 누르면 닫힌다", async () => {
   const page = loadAdminPage({ memos: [MEMO] });
   await page.settled;

@@ -100,7 +100,7 @@ function makeFetch({ version, fail, tokens, memos, requests }) {
     const one = path.match(/\/memos\/(\d+)$/);
     const body = path.includes("/version") ? { version }
       : path.includes("/admin/tokens") ? { count: tokens.length, tokens }
-        : one ? { memo: memos.find((m) => String(m.id) === one[1]) }
+        : one ? (() => { const m = memos.find((x) => String(x.id) === one[1]); return { memo: m, comments: m?.comments || [] }; })()
           : { count: memos.length, total: memos.length, limit: 10, offset: 0, memos };
     return { ok: true, status: 200, json: async () => body };
   };

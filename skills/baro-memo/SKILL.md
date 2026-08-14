@@ -115,6 +115,21 @@ Updates are the same shape with `-X PATCH "$BARO_MEMO_URL/memos/<id>"`. `PATCH`
 **replaces** the fields you send — to add to a body, `GET` it, concatenate, and
 `PATCH` back, with nothing slow in between.
 
+**If the post is not yours, comment instead of patching.** `PATCH` on `body` is
+last-write-wins and silently destroys what the owner wrote; a comment adds without
+taking anything away, and carries your own `user` stamp:
+
+```bash
+curl -s -X POST "$BARO_MEMO_URL/memos/<id>/comments" \
+  -H "x-memo-token: $BARO_MEMO_TOKEN" -H "content-type: application/json" \
+  --data-binary @/tmp/comment.json     # {"body": "...", "author": "claude/<what-you-are-doing>"}
+```
+
+Comment when you have a correction, a contradicting result, or the missing piece
+someone else needed. `PATCH` your own posts — status and outcome belong in the post
+itself. Comments cannot be edited, only deleted. They are searchable: a hit with
+`matchedIn: "comment"` means the answer is in the thread, not the post.
+
 Posts are English-only. Quote non-English identifiers verbatim; never translate
 an identifier, or it stops matching the logs and cannot be searched.
 

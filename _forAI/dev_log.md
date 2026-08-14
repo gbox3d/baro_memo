@@ -121,3 +121,26 @@
   - `/memo/admin/` 에 `Cache-Control: no-store`(deploy 조각). 무빌드라 파일 이름에 판 번호가
     없어 브라우저가 옛 판을 쥐면 서버 잘못처럼 보인다. nginx `-t` 후 reload 했다.
   - 검사 75 → 98(관리자 페이지 23). `readme.md` 의 개수 표기는 세 곳이라 같이 고쳤다.
+- 2026-08-14 (v0.4.0): **댓글**. 메모마다 스레드가 붙고, 검색이 그 안까지 훑는다.
+  - **왜 본문에 이어 붙이지 않았나**: 귀속이다. 서버가 토큰에서 `user` 를 찍는 것이 이 서비스가
+    baro_calrory 에서 분리된 이유인데, 남의 본문에 이어 붙이면 그 문장의 주인을 말할 수 없다.
+    덤으로 `PATCH` last-write-wins 에서 남의 글이 사라지는 경로가 하나 줄었다.
+  - `comment` 테이블 + `comment_fts`(trigram) + 트리거 셋. **스키마는 `schema.mjs` 한 곳에서**
+    세운다 — 목록의 `commentCount` 와 검색이 두 테이블에 걸쳐 있어, 스토어마다 자기 것만 만들면
+    `MemoStore` 만 세운 코드(기존 검사 전부가 그랬다)가 no such table 로 죽는다. 필드 검증도
+    `fields.mjs` 로 갈라 memo·comment 가 같은 상한을 쓴다.
+  - 검색: 두 색인의 적중을 UNION 하고 메모마다 `ROW_NUMBER` 로 한 줄만 남긴다(양쪽에서 걸린
+    메모가 결과에 두 번 나오지 않게). 결과에 `matchedIn`(memo|comment)과 그쪽 snippet 이 붙는다 —
+    본문에 없는 낱말로 걸린 메모를 받은 소비자가 "검색이 고장 났나"로 읽지 않게.
+  - 라우트: `GET/POST /api/memos/:id/comments`, `DELETE .../comments/:commentId`. 삭제는 **경로가
+    사실과 맞아야** 한다(다른 메모 밑으로 지우면 404 comment_not_found) — 지워 주면 지운 사람은
+    자기가 무엇을 지웠는지 모른다. 수정 경로는 없다(append-only): 인용되는 글이 조용히 바뀌면
+    인용이 무의미해진다.
+  - `GET /api/memos/:id` 가 `{memo, comments}` 로, 목록·한 건 모두 `commentCount` 를 싣는다.
+    둘 다 **가산적**이라 기존 소비자는 그대로 돈다.
+  - 관리자 페이지는 **보기만**: 팝업 본문 아래에 댓글이 시간순으로 붙고 목록에 개수 열이 생겼다.
+    쓰기는 에이전트의 일이라는 경계를 유지했다(그 페이지가 든 것은 관리자 토큰이지 쓰기 토큰이
+    아니라는 실제 이유도 있다).
+  - 검사 98 → 112. 스킬(`skills/baro-memo/SKILL.md`)에 "남의 글은 고치지 말고 댓글" 절차를 넣었다.
+  - 배포: pm2 재시작 뒤 `/api/version` 0.4.0 확인, 운영 보드에서 댓글 작성 → `?q=` 로
+    `matchedIn=comment` 확인 → 삭제 → 색인에서 사라짐까지 왕복으로 검증했다.

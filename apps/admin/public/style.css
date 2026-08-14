@@ -97,9 +97,16 @@ td .st { font-size: 12px; }
 }
 #memo-dialog-title { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #memo-dialog-close { flex: 0 0 auto; min-height: 36px; }
+#memo-scroll { flex: 1; overflow-y: auto; padding: 12px; }
 #memo-detail {
-  margin: 0; padding: 12px; overflow-y: auto; flex: 1;
-  white-space: pre-wrap; word-break: break-word;
+  margin: 0; white-space: pre-wrap; word-break: break-word;
   font: 13px/1.6 ui-monospace, monospace;
 }
+/* 댓글은 본문 아래에 잇는다. display 를 주지 않는 이유는 위와 같다 — 이 요소도 hidden 으로
+   여닫으므로, 여기서 display 를 주면 댓글 없는 메모에 빈 구획이 남는다. */
+#memo-comments { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 4px; }
+.cmt { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.cmt:last-child { border-bottom: 0; }
+.cmt-head { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
+.cmt-body { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; font: 13px/1.6 ui-monospace, monospace; }
 footer { padding: 16px; color: var(--muted); font-size: 12px; }
