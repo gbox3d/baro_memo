@@ -11,6 +11,7 @@ import test from "node:test";
 import { openDb } from "../src/core/db.mjs";
 import { MemoStore } from "../src/memo/memo-store.mjs";
 import { CommentStore } from "../src/memo/comment-store.mjs";
+import { AuditStore } from "../src/memo/audit-store.mjs";
 import { TokenStore } from "../src/auth/token-store.mjs";
 import { createMemoRoutes } from "../src/memo/routes.mjs";
 
@@ -24,13 +25,14 @@ function rig(users = ["kim"], { adminToken = "adm_test_value" } = {}) {
   const commentStore = new CommentStore(db);
   const tokenStore = new TokenStore(db);
   const tokens = Object.fromEntries(users.map((u) => [u, tokenStore.issue({ user: u }).token]));
-  const router = createMemoRoutes({ memoStore, tokenStore, commentStore, adminToken });
+  const auditStore = new AuditStore(db);
+  const router = createMemoRoutes({ memoStore, tokenStore, commentStore, auditStore, adminToken });
   // 읽기도 토큰이 필요해졌으므로 기본 헤더가 있다. 문턱 자체를 보는 검사는 `{}` 를 명시해 끈다.
   const reader = users.length ? { "x-memo-token": tokens[users[0]] } : {};
   return {
     handle: (method, path, body = {}, headers = reader) => router(method, path, null, body, headers),
     list: (query = "", headers = reader) => router("GET", "/api/memos", query, {}, headers),
-    adminToken, memoStore, commentStore, tokenStore, tokens,
+    adminToken, memoStore, commentStore, auditStore, tokenStore, tokens,
   };
 }
 
@@ -418,4 +420,71 @@ test("목록은 메모마다 commentCount 를 싣는다 — 있는지 보려고 
   const counts = Object.fromEntries(res.json.memos.map((m) => [m.id, m.commentCount]));
   assert.equal(counts[a.memo.id], 1);
   assert.equal(Object.values(counts).filter((n) => n === 0).length, 1);
+});
+
+// ---- 이력 --------------------------------------------------------------------------------
+//
+// 사용자 축의 이력은 **사실만** 준다. 자기 글이 고쳐졌는데 본인만 모르는 상태를 만들지 않으면서,
+// 덮인 본문과 지워진 제목은 관리자 축에만 남긴다 — 그 경계가 이 검사의 주제다.
+
+test("이력은 언제·누가·무엇을 말하고, 내용은 말하지 않는다", async () => {
+  const { handle, tokens } = rig(["kim", "lee"]);
+  const mine = { "x-memo-token": tokens.kim };
+  const theirs = { "x-memo-token": tokens.lee };
+  const { json: made } = await handle("POST", "/api/memos", { title: "내 글", body: "원래 본문" }, mine);
+
+  await handle("PATCH", `/api/memos/${made.memo.id}`, { body: "남이 덮은 본문", status: "doing" }, theirs);
+
+  const res = await handle("GET", `/api/memos/${made.memo.id}/history`, {}, mine);
+  assert.equal(res.status, 200);
+  assert.equal(res.json.total, 1);
+  const [entry] = res.json.history;
+  assert.equal(entry.action, "memo_update");
+  assert.equal(entry.actor, "lee", "누가 고쳤는지는 당사자가 알아야 한다");
+  assert.ok(entry.at, "언제인지도");
+  assert.deepEqual(entry.fields, ["body", "status"], "무엇이 바뀌었는지는 칸 이름까지");
+
+  // 내용은 없다. 있으면 "관리자 전용" 이 이름뿐이 된다.
+  assert.equal(entry.before, undefined);
+  assert.equal(entry.after, undefined);
+  assert.equal(entry.summary, undefined);
+  assert.equal(JSON.stringify(res.json).includes("원래 본문"), false);
+  assert.equal(JSON.stringify(res.json).includes("남이 덮은 본문"), false);
+});
+
+test("메모가 지워져도 이력은 답한다 — 그게 이 축이 있는 이유다", async () => {
+  const { handle, tokens } = rig(["kim", "lee"]);
+  const mine = { "x-memo-token": tokens.kim };
+  const { json: made } = await handle("POST", "/api/memos", { title: "곧 사라질 글", body: "b" }, mine);
+  await handle("POST", `/api/memos/${made.memo.id}/comments`, { body: "댓글" }, mine);
+  await handle("DELETE", `/api/memos/${made.memo.id}`, {}, { "x-memo-token": tokens.lee });
+
+  assert.equal((await handle("GET", `/api/memos/${made.memo.id}`, {}, mine)).status, 404, "메모는 없다");
+
+  const res = await handle("GET", `/api/memos/${made.memo.id}/history`, {}, mine);
+  assert.equal(res.status, 200, "이력까지 404 면 '그 메모 어디 갔나'를 물어볼 곳이 없다");
+  const [entry] = res.json.history;
+  assert.equal(entry.action, "memo_delete");
+  assert.equal(entry.actor, "lee");
+  assert.equal(entry.memoOwner, "kim");
+  assert.equal(entry.commentsRemoved, 1);
+  assert.equal(JSON.stringify(res.json).includes("곧 사라질 글"), false, "지워진 제목도 내용이다");
+});
+
+test("이력에도 토큰이 필요하고, 쓰기 경로는 없다", async () => {
+  const { handle, tokens } = rig();
+  const { json: made } = await handle("POST", "/api/memos", { body: "b" }, { "x-memo-token": tokens.kim });
+  assert.equal((await handle("GET", `/api/memos/${made.memo.id}/history`, {}, {})).status, 401);
+  assert.equal((await handle("POST", `/api/memos/${made.memo.id}/history`, {}, {})).status, 401);
+  assert.equal((await handle("POST", `/api/memos/${made.memo.id}/history`, {})).status, 405);
+  assert.equal((await handle("GET", "/api/memos/abc/history")).status, 404);
+});
+
+test("아무도 손대지 않은 글의 이력은 비어 있다 — 없는 것과 잃은 것은 다르다", async () => {
+  const { handle, tokens } = rig();
+  const { json: made } = await handle("POST", "/api/memos", { body: "b" }, { "x-memo-token": tokens.kim });
+  // 같은 값으로 덮은 PATCH 는 이력이 아니다.
+  await handle("PATCH", `/api/memos/${made.memo.id}`, { body: "b" }, { "x-memo-token": tokens.kim });
+  const res = await handle("GET", `/api/memos/${made.memo.id}/history`);
+  assert.deepEqual(res.json, { count: 0, total: 0, memoId: made.memo.id, history: [] });
 });

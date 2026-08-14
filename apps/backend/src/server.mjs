@@ -46,7 +46,7 @@ const auditStore = new AuditStore(db);
 const tokenStore = new TokenStore(db);
 
 const routers = [
-  createMemoRoutes({ memoStore, tokenStore, commentStore, adminToken: ADMIN_TOKEN }),
+  createMemoRoutes({ memoStore, tokenStore, commentStore, auditStore, adminToken: ADMIN_TOKEN }),
   createAdminRoutes({ tokenStore, auditStore, adminToken: ADMIN_TOKEN }),
 ];
 

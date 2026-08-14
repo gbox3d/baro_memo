@@ -217,6 +217,30 @@ test("팝업에 댓글이 시간순으로 붙고, 없으면 구획 자체가 안
   assert.equal(page.node("#memo-dialog-title").textContent.includes("댓글"), false);
 });
 
+test("팝업이 이 글에 무슨 일이 있었는지 보여 준다 — 손댄 적 없으면 구획도 없다", async () => {
+  const touched = {
+    ...MEMO, id: 14,
+    history: [
+      { id: 2, at: INSTANT, actor: "lee", action: "memo_update", memoId: 14, fields: ["body", "status"] },
+      { id: 1, at: INSTANT, actor: "kim", action: "comment_delete", memoId: 14, commentId: 3, commentAuthor: "lee" },
+    ],
+  };
+  const page = loadAdminPage({ memos: [touched, MEMO] });
+  await page.settled;
+  page.pickMemoRow(0);
+  await drain();
+
+  const box = page.node("#memo-history");
+  assert.equal(box.hidden, false);
+  assert.deepEqual(box.children.map((r) => r.children[1].textContent),
+    ["lee · 수정 (body, status)", "kim · 댓글 삭제 (lee 의 댓글)"]);
+
+  page.node("#memo-dialog-close")._on.click();
+  page.pickMemoRow(1);
+  await drain();
+  assert.equal(page.node("#memo-history").hidden, true);
+});
+
 test("같은 줄을 다시 누르면 닫힌다", async () => {
   const page = loadAdminPage({ memos: [MEMO] });
   await page.settled;

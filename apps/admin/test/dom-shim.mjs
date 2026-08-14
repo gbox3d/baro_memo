@@ -97,6 +97,11 @@ function makeFetch({ version, fail, tokens, memos, requests }) {
       const issued = { id: 99, user: "new", note: "", token: "tok_new", createdAt: "2026-08-14T00:00:00.000Z", revokedAt: null };
       return { ok: true, status: 201, json: async () => ({ token: issued }) };
     }
+    const hist = path.match(/\/memos\/(\d+)\/history$/);
+    if (hist) {
+      const m = memos.find((x) => String(x.id) === hist[1]);
+      return { ok: true, status: 200, json: async () => ({ count: (m?.history || []).length, total: (m?.history || []).length, memoId: Number(hist[1]), history: m?.history || [] }) };
+    }
     const one = path.match(/\/memos\/(\d+)$/);
     const body = path.includes("/version") ? { version }
       : path.includes("/admin/tokens") ? { count: tokens.length, tokens }

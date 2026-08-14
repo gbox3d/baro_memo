@@ -12,7 +12,7 @@ const PAGE = 10;
 // bodies: 목록은 본문을 싣지 않는다(요약 색인이다). 펼친 메모의 전문만 id 로 받아 여기 담아
 // 둔다 — 같은 메모를 다시 펼칠 때 또 부르지 않게.
 const state = {
-  tokens: [], memos: [], bodies: new Map(), comments: new Map(),
+  tokens: [], memos: [], bodies: new Map(), comments: new Map(), history: new Map(),
   offset: 0, total: 0,
   selectedToken: null, selectedMemo: null,
 };
@@ -321,6 +321,38 @@ function renderMemos() {
   const text = full ?? `${sel.bodyPreview}${sel.bodyLength > sel.bodyPreview.length ? "…" : ""}`;
   $("#memo-detail").textContent = text + (sel.updatedBy ? `\n\n— last write: ${sel.updatedBy}` : "");
   renderComments(sel.id);
+  renderHistory(sel.id);
+}
+
+// 이 글에 무슨 일이 있었나. 서버가 주는 것도 사실뿐이라(내용은 관리자 축), 그대로 한 줄씩 적는다.
+const HISTORY_LABEL = {
+  memo_update: "수정",
+  memo_delete: "삭제",
+  comment_delete: "댓글 삭제",
+};
+
+function renderHistory(memoId) {
+  const box = $("#memo-history");
+  const list = state.history.get(memoId) || [];
+  box.hidden = list.length === 0; // 손댄 적 없는 글에 빈 구획을 남기지 않는다
+  box.replaceChildren(...list.map((h) => {
+    const row = document.createElement("div");
+    row.className = "hist";
+
+    const when = document.createElement("time");
+    when.textContent = stamp(h.at);
+    when.title = stampTitle(h.at);
+
+    const what = document.createElement("span");
+    const label = HISTORY_LABEL[h.action] || h.action;
+    const detail = h.action === "memo_update" ? (h.fields || []).join(", ")
+      : h.action === "memo_delete" ? `${h.memoOwner || "?"} 의 글${h.commentsRemoved ? ` · 댓글 ${h.commentsRemoved}건 포함` : ""}`
+        : `${h.commentAuthor || "?"} 의 댓글`;
+    what.textContent = `${h.actor || "?"} · ${label}${detail ? ` (${detail})` : ""}`;
+
+    row.append(when, what);
+    return row;
+  }));
 }
 
 // 댓글은 본문과 함께 온다(GET memos/:id). 여기서 문자열을 조립하지 않고 노드로 세우는 이유는
@@ -389,10 +421,12 @@ async function selectMemo(id) {
   openMemo();
   if (state.bodies.has(id)) return;
   try {
-    // 한 건은 본문과 댓글을 같이 준다 — 한 번 받아 둘 다 캐시한다.
-    const one = await call(`memos/${id}`);
+    // 한 건은 본문과 댓글을 같이 준다. 이력은 축이 다르므로 나란히 부른다 — 순서대로 부르면
+    // 팝업이 두 번 늦게 채워진다.
+    const [one, past] = await Promise.all([call(`memos/${id}`), call(`memos/${id}/history`)]);
     state.bodies.set(id, one.memo.body);
     state.comments.set(id, one.comments || []);
+    state.history.set(id, past.history || []);
     if (state.selectedMemo === id) renderMemos();
   } catch (err) { sayError(err); }
 }
@@ -412,6 +446,7 @@ async function loadMemos() {
     // 새로고침은 캐시를 버린다 — 남겨 두면 남이 고친 본문이나 새로 달린 댓글을 놓친다.
     state.bodies.clear();
     state.comments.clear();
+    state.history.clear();
     // 요약 색인 한 쪽만 받는다. 보드가 커져도 이 페이지가 무거워지지 않는다.
     const page = await call(`memos?limit=${PAGE}&offset=${state.offset}`);
     // 마지막 쪽에서 메모가 지워지면 offset 이 total 을 넘어 빈 화면이 된다 — 한 쪽 당겨 다시.

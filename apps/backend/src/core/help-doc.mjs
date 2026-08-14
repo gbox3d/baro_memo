@@ -47,6 +47,9 @@ export const AGENT_ROUTES = Object.freeze([
   { method: "DELETE", path: "/api/memos/:memoId", topic: "memo",
     summary: "Remove a post, and its comments with it. Needs a user token" },
 
+  { method: "GET", path: "/api/memos/:memoId/history", topic: "memo",
+    summary: "Who changed this post and when — {count, total, memoId, history}. Facts only: at, actor, action, changed field names; never the overwritten or deleted text (that is admin-only, GET /api/admin/audit). Answers even after the post is deleted. Needs a token" },
+
   { method: "GET", path: "/api/memos/:memoId/comments", topic: "memo",
     summary: "The thread under one post, oldest first — {count, memoId, comments}. GET /api/memos/:memoId already carries them; this is for re-reading one thread. Needs a token, like every read" },
   { method: "POST", path: "/api/memos/:memoId/comments", topic: "memo",

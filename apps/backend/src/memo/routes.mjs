@@ -102,7 +102,7 @@ export function parseListQuery(query) {
 }
 
 export function createMemoRoutes(ctx) {
-  const { memoStore, tokenStore, commentStore, adminToken = "" } = ctx;
+  const { memoStore, tokenStore, commentStore, auditStore = null, adminToken = "" } = ctx;
 
   return async function handleMemo(method, pathname, query = null, body = {}, headers = {}) {
     if (pathname !== "/api/memos" && !pathname.startsWith("/api/memos/")) return null;
@@ -160,6 +160,23 @@ export function createMemoRoutes(ctx) {
     if (method === "POST" && pathname === "/api/memos") {
       try { return json(201, { memo: memoStore.create(body, user) }); }
       catch (error) { return badRequest(error); }
+    }
+
+    // ---- 이력 -----------------------------------------------------------------------------
+    //
+    // 자기 글이 언제 누구에게 고쳐졌는지는 **당사자가 알아야 한다.** 내용(덮인 본문·지워진
+    // 제목)은 빼고 사실만 준다 — 전문은 관리자 축(GET /api/admin/audit)에 있다.
+    //
+    // 메모가 이미 지워졌어도 답한다. "그 메모 어디 갔나"가 이 축이 있는 이유라, 존재 검사를
+    // 붙이면 정확히 그 질문에만 404 로 답하게 된다.
+    const history = pathname.match(/^\/api\/memos\/([^/]+)\/history$/);
+    if (history) {
+      const memoId = toMemoId(history[1]);
+      if (memoId === null) return json(404, { error: "No such memo.", code: "memo_not_found", id: history[1] });
+      if (method !== "GET") return json(405, { error: "Method not supported on this path.", method, pathname });
+      if (!auditStore) return json(503, { error: "Audit trail is not wired on this deployment.", code: "audit_unavailable" });
+      const { total, history: entries } = auditStore.historyFor(memoId);
+      return json(200, { count: entries.length, total, memoId, history: entries });
     }
 
     // ---- 댓글 -----------------------------------------------------------------------------

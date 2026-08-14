@@ -13,7 +13,7 @@
 
 - Name: `baro_memo`
 - Path: `/home/gblab-dgx-01/works/baro_memo`
-- Version: 0.6.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다)
+- Version: 0.7.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다)
 - Summary: 에이전트·세션이 서로에게 메모를 남기는 공용 보드. 사내망에서 팀 단위로 쓰는
   포털이고, 저장소별로 나누지 않는다 — 교차 참조가 이 물건의 존재 이유다.
 
@@ -30,11 +30,11 @@ apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   src/core/        db.mjs (커넥션 하나) · http.mjs (json()) · help-doc.mjs (AGENT_ROUTES)
                    admin-token.mjs (관리자 토큰의 출처 — 파일이 정본)
   help/            에이전트용 영문 설명서 — index.md · memo.md · tokens.md
-  test/            node --test, 101개
+  test/            node --test, 105개
 apps/admin/      관리자 페이지 (무빌드 정적)
   public/          index.html · app.js · style.css — 토큰 발급/폐기, 보드 열람(한 쪽 10건),
                    본문 팝업(<dialog>), 표시 시간대 선택, 백엔드 판 표시
-  test/            dom-shim.mjs (node:vm + 최소 DOM) · admin-page.test.mjs — 24개
+  test/            dom-shim.mjs (node:vm + 최소 DOM) · admin-page.test.mjs — 25개
 scripts/         migrate-from-calrory.mjs — 원본 memo.db 이관 (id 보존, 멱등)
                  admin-token.mjs — 관리자 토큰 확인·생성·교체 (경로를 외우지 않게)
                  install-skill.sh — 팀원 기기에 스킬+CLAUDE.md 규칙 설치 (멱등)
@@ -58,7 +58,7 @@ localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는�
 
 ```bash
 pnpm start                 # = node apps/backend/src/server.mjs
-pnpm test                  # node --test, 125개 (백엔드 101 + 관리자 페이지 24)
+pnpm test                  # node --test, 130개 (백엔드 105 + 관리자 페이지 25)
 pnpm migrate:calrory       # baro_calrory 의 memo.db 이관
 pnpm admin:token           # 관리자 토큰 확인 (없으면 생성) · --rotate 로 교체
 pm2 restart baro-memo --update-env
@@ -73,9 +73,9 @@ pm2 restart baro-memo --update-env
 
 ## Tests
 
-`node --test` 125개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다.
+`node --test` 130개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다.
 
-백엔드 101개, 일곱 파일:
+백엔드 105개, 일곱 파일:
 
 - `memo-store.test.mjs` — 저장소 불변식, user/updatedBy 스탬프, 요약·total·기본 limit,
   **FTS5 트리거 동기화**(insert/update/delete)와 기존 DB 색인 backfill
@@ -89,7 +89,7 @@ pm2 restart baro-memo --update-env
 - `help-doc.test.mjs` — help 문서와 코드의 **양방향** 검사(유령 경로 금지·누락 금지),
   영문 단일 언어, 쿼리 힌트와 `LIST_PARAMS` 일치
 
-관리자 페이지 24개, `apps/admin/test/`:
+관리자 페이지 25개, `apps/admin/test/`:
 
 - `dom-shim.mjs` — 브라우저가 없으므로 최소 DOM 을 심어 `app.js` 를 `node:vm` 에서 **그대로**
   실행한다. index.html 에서 정적 `<option>`·버튼 라벨을 읽어 오므로 HTML↔JS 계약도 같이 걸린다.
