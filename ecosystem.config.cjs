@@ -37,5 +37,21 @@ module.exports = {
       merge_logs: true,
       time: true,
     },
+    {
+      // 아티팩트 저장소. **한 저장소, 두 프로세스**다 — 코드와 문서는 같이 살고(둘의 계약이
+      // 어긋나면 같은 커밋에서 잡힌다), 실행은 갈라 둔다. 보드 서버는 본문을 통째로 메모리에
+      // 올린 뒤 라우팅하는 구조라, 수 GB 스트리밍을 그 프로세스에 심으면 라우터 규약을
+      // 우회하는 두 번째 서버가 안에 생기고 업로드가 멎을 때 보드가 같이 멎는다.
+      //
+      // 설정은 같은 .env 를 읽되 이름이 갈라져 있다(FILES_PORT·FILES_ROOT·MEMO_API).
+      name: "baro-files",
+      script: join(ROOT, "apps/files/src/server.mjs"),
+      cwd: ROOT,
+      interpreter: "node",
+      autorestart: true,
+      max_restarts: 10,
+      merge_logs: true,
+      time: true,
+    },
   ],
 };

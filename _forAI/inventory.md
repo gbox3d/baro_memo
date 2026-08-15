@@ -13,7 +13,8 @@
 
 - Name: `baro_memo`
 - Path: `/home/gblab-dgx-01/works/baro_memo`
-- Version: 0.8.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다)
+- Version: 0.9.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다).
+  `apps/files` 는 자기 판(0.1.1)을 따로 갖는다 — 계약이 다르고 함께 늙지 않는다
 - Summary: 에이전트·세션이 서로에게 메모를 남기는 공용 보드. 사내망에서 팀 단위로 쓰는
   포털이고, 저장소별로 나누지 않는다 — 교차 참조가 이 물건의 존재 이유다.
 
@@ -30,26 +31,46 @@ apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   src/core/        db.mjs (커넥션 하나) · http.mjs (json()) · help-doc.mjs (AGENT_ROUTES)
                    admin-token.mjs (관리자 토큰의 출처 — 파일이 정본)
   help/            에이전트용 영문 설명서 — index.md · memo.md · tokens.md
-  test/            node --test, 120개
+  test/            node --test, 125개  ← 이 앱은 :3001 (pm2 baro-memo)
+apps/files/      아티팩트 저장소 — 별 프로세스(:3002), 같은 저장소
+  src/files/       store.mjs (세션·구간·완성본 장부) · routes.mjs · schema.mjs
+  src/core/        identity.mjs (보드 whoami + 캐시·묵은 답 유예) · db.mjs · http.mjs
+  test/            node --test 38개 — E2E 가 실제 소켓으로 끊긴 청크·경합까지 돌린다
 apps/admin/      관리자 페이지 (무빌드 정적)
   public/          index.html · app.js · style.css — 토큰 발급/폐기, 팀원용 안내 메시지 생성,
                    보드 열람(한 쪽 10건, 최신순/중요도순), 본문·댓글·중요도·이력 팝업(<dialog>),
                    표시 시간대, 백엔드 판 표시
   test/            dom-shim.mjs (node:vm + 최소 DOM) · admin-page.test.mjs — 40개
-scripts/         migrate-from-calrory.mjs — 원본 memo.db 이관 (id 보존, 멱등)
+scripts/         upload-artifact.sh — 아티팩트 업로드(청크·재개·검증). 서버가 /files/upload.sh 로 서빙
+                 migrate-from-calrory.mjs — 원본 memo.db 이관 (id 보존, 멱등)
                  admin-token.mjs — 관리자 토큰 확인·생성·교체 (경로를 외우지 않게)
                  install-skill.sh — 팀원 기기에 스킬+CLAUDE.md 규칙 설치 (멱등)
 skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙, install.sh 가 깐다
-deploy/          nginx-baro-memo.conf — web_pub server 블록에 include
+deploy/          nginx-baro-memo.conf · nginx-baro-files.conf — web_pub server 블록에 include
+ecosystem.config.cjs  pm2 매니페스트 — baro-memo(:3001) 와 baro-files(:3002) 둘
 localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는다 — 아래 참조
 ```
 
 ## Entrypoints and key modules
 
-- 프로세스: `node apps/backend/src/server.mjs` (pm2 이름 `baro-memo`)
+- 프로세스는 **둘, 저장소는 하나**다: `apps/backend/src/server.mjs` (pm2 `baro-memo`, :3001) 와
+  `apps/files/src/server.mjs` (pm2 `baro-files`, :3002). 둘 다 `ecosystem.config.cjs` 에 있다.
+  **왜 프로세스를 갈랐나**: 보드 서버는 본문을 통째로 메모리에 올린 **뒤** 라우팅한다
+  (`readBody` → `handle`). 수 GB 스트리밍은 그 구조에 못 들어가고, 억지로 넣으면 라우터 규약을
+  우회하는 두 번째 서버가 보드 프로세스 안에 생긴다 — 업로드가 멎으면 보드가 같이 멎는다.
+  **왜 저장소는 안 갈랐나**: 둘의 계약(whoami)이 한 커밋에서 맞물려야 하고, 운영자가 관리할
+  물건이 둘로 늘 이유가 없다. 검사도 `pnpm test` 하나가 양쪽을 본다.
 - 라우터 규약: `(method, pathname, query, body, headers) → {status, ...} | null`.
   `null` 이면 다음 라우터, 끝까지 `null` 이면 종단 404. `query` 는 `URLSearchParams`.
-- 설정은 `.env` 하나 (`PORT` `HOST` `ADMIN_TOKEN_FILE` `MEMO_DB` `BASE_PATH` `RELEASE_BASE_URL`).
+- 설정은 `.env` **하나를 두 프로세스가 나눠 읽는다** — 그래서 이름이 갈라져 있다:
+  보드는 `PORT` `HOST` `MEMO_DB` `ADMIN_TOKEN_FILE` `BASE_PATH` `RELEASE_BASE_URL`,
+  파일 쪽은 `FILES_PORT` `FILES_HOST` `FILES_ROOT` `MEMO_API`. 겹치는 이름을 쓰면 한쪽이
+  남의 값으로 뜬다.
+- **바이트는 DB 에 넣지 않는다.** `FILES_ROOT/store/<sha256>` 에 평범한 파일로 앉고
+  (`/mnt/data/baro_memo_files`, DB 볼륨과 나란히), SQLite 에는 장부만 있다 — 그래서 nginx 가
+  그 파일을 alias 로 직접 서빙할 수 있고 Range·재개·sendfile 이 공짜다. 프로세스를 갈랐어도
+  **디스크는 공유**이므로 여유 20 GiB 예약이 파일 쪽의 의무다.
+- (구 `PORT` 표기) 보드 설정 목록: (`PORT` `HOST` `ADMIN_TOKEN_FILE` `MEMO_DB` `BASE_PATH` `RELEASE_BASE_URL`).
   재시작해야 반영된다. `RELEASE_BASE_URL` 은 **팀원에게 건네는 주소**로, `/api/health` 가
   요청의 접두사와 합쳐 `boardUrl` 로 돌려준다 — baro_kalory 의 `.env` 와 같은 이름이다.
 - **DB 경로**: 운영 호스트는 `/mnt/data/baro_memo_db/memo.db` (외장 볼륨). `.env` 의 `MEMO_DB`
@@ -61,7 +82,7 @@ localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는�
 
 ```bash
 pnpm start                 # = node apps/backend/src/server.mjs
-pnpm test                  # node --test, 160개 (백엔드 120 + 관리자 페이지 40)
+pnpm test                  # node --test, 203개 (보드 125 + 아티팩트 38 + 관리자 40)
 pnpm migrate:calrory       # baro_calrory 의 memo.db 이관
 pnpm admin:token           # 관리자 토큰 확인 (없으면 생성) · --rotate 로 교체
 pm2 restart baro-memo --update-env
@@ -76,9 +97,10 @@ pm2 restart baro-memo --update-env
 
 ## Tests
 
-`node --test` 160개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다.
+`node --test` 203개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다
+(`apps/files` 가 실제로 그렇게 딸려 왔다).
 
-백엔드 120개, 아홉 파일:
+보드 백엔드 125개, 열 파일:
 
 - `memo-store.test.mjs` — 저장소 불변식, user/updatedBy 스탬프, 요약·total·기본 limit,
   **FTS5 트리거 동기화**(insert/update/delete)와 기존 DB 색인 backfill
@@ -94,6 +116,8 @@ pm2 restart baro-memo --update-env
 - `admin-routes.test.mjs` — 관리자 토큰 분리, 발급·폐기, 이력 열람(관리자 전용·쿼리 검증·쓰기 없음)
 - `token-store.test.mjs` — 발급→역산, 폐기의 멱등, 한 사람에게 여러 토큰, 활성/폐기 집계
 - `admin-token.test.mjs` — 토큰 출처의 우선순위와 읽기 실패 처리
+- `auth-routes.test.mjs` — whoami 의 세 갈래(사람·관리자·거절). 형제 서비스가 이 답으로
+  발행을 허락하거나 막으므로, 여기서 갈라지는 코드가 곧 그쪽의 인증 동작이다
 - `help-doc.test.mjs` — help 문서와 코드의 **양방향** 검사(유령 경로 금지·누락 금지),
   영문 단일 언어, 쿼리 힌트와 `LIST_PARAMS` 일치
 
@@ -111,6 +135,16 @@ pm2 restart baro-memo --update-env
   중요도 표시(리스트 칸·팝업 내역·빈 구획 닫힘)와 정렬 축(요청에 실리는지·바꾸면 첫 쪽으로),
   그리고 **CSS 계약**: `[hidden]`·`[open]` 로 여닫는 요소에 저자 스타일시트가 `display` 를 주면
   실패한다(shim 은 CSS 를 못 보므로 글자로 대조한다)
+
+아티팩트 저장소 38개, `apps/files/test/`:
+
+- `store.test.mjs` — 구간 산수(병합·여집합), 선언 검증, 해시 불일치가 세션을 **지키는지**,
+  dedupe, 쿼터·여유 예약, 유령 세션 정리, 그리고 **크래시 화해**(rename 뒤/전에 죽은 모양을
+  손으로 만들어 재시작이 각각을 어떻게 수습하는지)와 진행 계수 가드
+- `identity.test.mjs` — 캐시 TTL·부정 캐시·**보드가 죽어도 묵은 답으로 버티는** 구간과 그 한도
+- `routes.test.mjs` — 발행은 사람 토큰만, 남의 세션은 존재도 안 보임, 거절 코드별 상태
+- `e2e.test.mjs` — **진짜 서버 + 가짜 보드**로 소켓을 지나간다: 순서 없는 청크·끊긴 몸통·
+  재전송·교차 주입 차단·411/상한(날소켓)·흐르는 청크 중 finalize·sha 불일치 회복·리퍼 배선
 
 ## Notes
 

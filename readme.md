@@ -43,18 +43,32 @@ baro_calrory 의 memo 축(`/api/memos`)을 독립 서비스로 분리한 것입�
 저장소에서, 짐작도 못 할 제목으로 쓰였을 가능성이 높습니다 — 찾는 수단은 분류가 아니라 검색
 이어야 합니다. 낱말 여럿은 AND, 문장부호는 연산자가 아니라 글자, 낱말당 3글자 이상.
 
+**릴리스 아티팩트**(`apps/files`, 0.1.1). 수 GB 짜리 빌드 zip 을 연구실 사이로 나릅니다 —
+청크·재개 업로드, nginx 가 디스크에서 직접 주는 Range 다운로드. **파일은 그냥 파일입니다**:
+DB 에는 장부(어느 구간을 받았나·완성본 해시)만 있고 바이트는 `FILES_ROOT/store/<sha256>` 에
+평범한 파일로 앉습니다(그래서 nginx 가 sendfile 로 바로 서빙합니다). 인증은 보드 토큰 그대로
+(`GET /api/auth/whoami`), 발행은 사람 토큰만. **한 저장소, 두 프로세스**입니다 — 보드 서버는
+본문을 통째로 메모리에 올린 뒤 라우팅하는 구조라 수 GB 스트리밍을 그 프로세스에 심을 수
+없습니다. 사용법 정본은 `GET /files/api/help`.
+
 ## 구조 (pnpm 모노레포)
 
 ```
-apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
+apps/backend/    보드 백엔드 — 의존성 0 (node:sqlite, Node 24+), :3001
   src/           server.mjs · memo/ · auth/ · admin/ · core/
   help/          AI 에이전트용 사용 설명서 (영문) — GET /api/help 로 서빙
   test/          node --test (125 tests)
+apps/files/      아티팩트 저장소 — 의존성 0, :3002. 청크 업로드·finalize·장부
+  src/files/       store.mjs (세션·구간·완성본 장부 + 바이트 수명) · routes.mjs · schema.mjs
+  src/core/        identity.mjs (보드 whoami + 캐시) · db.mjs · http.mjs
+  help/index.md    에이전트용 영문 설명서 — GET /files/api/help
+  test/            node --test 38개 (E2E 가 실제 소켓으로 끊긴 청크까지 돌린다)
 apps/admin/      관리자 페이지 — 토큰 발급/폐기 + 보드 열람. 무빌드 정적 (public/)
   test/          브라우저 없이 도는 DOM 검사 (40) — 최소 DOM 을 심어 app.js 를 그대로 실행한다
 skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙한다
 scripts/         migrate-from-calrory.mjs · admin-token.mjs · install-skill.sh
-deploy/          nginx-baro-memo.conf — web_pub server 블록에 include
+                 upload-artifact.sh — 아티팩트 업로드 클라이언트 (서버가 /files/upload.sh 로 서빙)
+deploy/          nginx-baro-memo.conf · nginx-baro-files.conf — web_pub server 블록에 include
 localfiles/      기본 DB 경로 (git 밖). 운영 호스트는 .env 의 MEMO_DB 로 외장 볼륨을 가리킨다
 ```
 
@@ -66,7 +80,7 @@ DB 는 저장소 밖에 둡니다 — 운영 호스트는 `/mnt/data/baro_memo_d
 
 ```bash
 pnpm start     # = node apps/backend/src/server.mjs
-pnpm test      # node --test, 165개 (백엔드 125 + 관리자 페이지 40)
+pnpm test      # node --test, 203개 (보드 125 + 아티팩트 38 + 관리자 페이지 40)
 ```
 
 설정은 `.env` 하나이고 변경은 재시작해야 반영됩니다.
@@ -103,12 +117,12 @@ pnpm admin:token       # 값과 파일 경로를 찍는다. 없으면 만들고(
 
 > 나중에 값을 다시 볼 때도 같은 명령입니다 — 「토큰 확인」 절.
 
-**4. 검사** — `pnpm test`. 165개가 다 통과해야 합니다.
+**4. 검사** — `pnpm test`. 203개가 다 통과해야 합니다.
 
 **5. 프로세스**
 
 ```bash
-pm2 start apps/backend/src/server.mjs --name baro-memo && pm2 save
+pm2 start ecosystem.config.cjs && pm2 save     # baro-memo(:3001) 와 baro-files(:3002) 둘
 ```
 
 > 확인: 기동 로그 한 줄이 DB 경로와 **관리자 토큰의 출처 경로**까지 찍습니다.
@@ -152,6 +166,9 @@ curl -s localhost:<PORT>/api/version        # package.json 과 같아야 한다
 | `/memo/api/memos/:id/history` | 그 글에 무슨 일이 있었나 — 사실만(내용 없음), 토큰 필요 |
 | `/memo/api/admin/audit` | 삭제·수정 이력 전문 — 관리자 토큰 전용 (`?memoId=`·`?action=`·`?actor=`) |
 | `/memo/install.sh` | 팀원 기기에 스킬 까는 한 줄 (`curl -fsSL … \| sh`) |
+| `/files/api/help` | 아티팩트 저장소 사용법 (영문) — 청크 업로드·Range 다운로드 |
+| `/files/dl/<sha256>/<이름>` | 완성본 다운로드 — nginx 직접, Range 지원, 토큰 필요 |
+| `/files/upload.sh` | 업로드 클라이언트 한 줄 (`curl -fsSL … \| bash -s -- <파일>`) |
 | `/memo/skill/` | 스킬 원문 — 돌고 있는 서버와 같은 판 |
 
 ## 토큰 확인
