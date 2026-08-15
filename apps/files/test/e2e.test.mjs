@@ -277,3 +277,40 @@ test("리퍼 배선 — 기동 즉시 1회, 주기 반복, 거절은 삼킨다",
   assert.ok(calls >= 2, "주기 반복이 배선돼 있어야 한다");
   // 첫 호출의 거절이 프로세스를 못 죽였다는 사실 자체가 '삼킨다'의 증명이다(unhandledRejection 이면 여기 못 온다).
 });
+
+test("서빙되는 업로드 스크립트에는 **받아 간 주소**가 박힌다 — 저장소 사본은 큰 소리로 멈춘다", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const { dirname, join } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+
+  // fetch 는 host 를 못 바꾼다(금지 헤더). 이 검사의 주제가 바로 Host 라 날 http 로 친다.
+  const fetchAs = (host) => new Promise((resolve, reject) => {
+    const net = server.address();
+    const r = http.request({
+      host: "127.0.0.1", port: net.port, method: "GET", path: "/api/upload.sh",
+      headers: { host, "x-forwarded-prefix": "/files" },
+    }, (res) => {
+      let raw = ""; res.on("data", (c) => { raw += c; });
+      res.on("end", () => resolve({ body: raw, type: res.headers["content-type"] || "" }));
+    });
+    r.on("error", reject);
+    r.end();
+  });
+
+  // 사내망으로 받은 것과 터널로 받은 것이 서로 다른 주소를 들고 나가야 한다.
+  const asLan = await fetchAs("192.168.0.220");
+  const lan = asLan.body;
+  assert.match(asLan.type, /shellscript/);
+  assert.match(lan, /BARO_FILES_URL:-http:\/\/192\.168\.0\.220\/files\/api/);
+
+  const tunnel = (await fetchAs("gobackdev.iptime.org:22030")).body;
+  assert.match(tunnel, /BARO_FILES_URL:-http:\/\/gobackdev\.iptime\.org:22030\/files\/api/,
+    "밖에서 받은 사본이 사내망 주소를 들고 나가면 그 사람에게만 깨진다 — 원인이 안 보이는 종류다");
+  assert.equal(tunnel.includes("{{API}}"), false, "치환이 남으면 스크립트가 죽는다");
+
+  // 저장소의 원본에는 주소가 없다 — 조용히 사내망으로 떨어지는 대신 멈추게 되어 있어야 한다.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const raw = await readFile(join(here, "..", "..", "..", "scripts", "upload-artifact.sh"), "utf8");
+  assert.ok(raw.includes("{{API}}"), "원본에 주소가 박혀 있으면 서버가 채워 줄 자리가 없다");
+  assert.match(raw, /BARO_FILES_URL 을 정하고/, "안 채워진 사본은 이유를 말하고 멈춰야 한다");
+});

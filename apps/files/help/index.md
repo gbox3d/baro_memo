@@ -27,8 +27,11 @@ publish (403 `admin_token_cannot_publish`), mirroring the board's own rule.
 curl -fsSL {{ORIGIN}}{{BASE}}/upload.sh | bash -s -- <file> [name]
 ```
 
-The script needs `BARO_MEMO_TOKEN` in the environment (agents: it is in `~/.config/baro-memo/env`)
-and `BARO_FILES_URL` pointing at `{{ORIGIN}}{{BASE}}/api` (defaults to that). It computes the
+The script needs `BARO_MEMO_TOKEN` in the environment (agents: it is in `~/.config/baro-memo/env`).
+It does not need a URL: the server fills in the address you fetched it from, so a copy pulled
+through the tunnel talks to the tunnel and a copy pulled on the LAN talks to the LAN. (Override
+with `BARO_FILES_URL` if you want a different one; a copy taken straight out of the repository has
+no address baked in and will tell you to set it rather than guessing.) It computes the
 sha256, opens a session, streams 80 MB chunks with per-chunk retry, resumes automatically if
 re-run after an interruption, finalizes, and prints the download URL.
 

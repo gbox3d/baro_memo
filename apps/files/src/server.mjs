@@ -160,6 +160,18 @@ async function handle(method, pathname, query, body, headers) {
   }
   if (method === "GET" && pathname === "/api/version") return json(200, { version: pkg.version });
 
+  // 업로드 클라이언트. **서버가 주소를 박아서 준다** — 받아 간 주소가 곧 그 사람이 쓸 주소다.
+  // 정적 파일로 서빙하면 스크립트 안의 기본 주소가 한 벌 박히고, 밖에 선 사람에게만 틀린다.
+  if (method === "GET" && pathname === "/api/upload.sh") {
+    const raw = await readFile(join(repoRoot, "scripts", "upload-artifact.sh"), "utf8");
+    const origin = headers.host ? `http://${headers.host}` : "";
+    return {
+      status: 200,
+      contentType: "text/x-shellscript; charset=utf-8",
+      body: raw.replaceAll("{{API}}", `${origin}${basePathOf(headers)}/api`),
+    };
+  }
+
   if (method === "GET" && pathname === "/api/help") {
     const md = (await readFile(join(here, "..", "help", "index.md"), "utf8"))
       .replaceAll("{{ORIGIN}}", headers.host ? `http://${headers.host}` : "")

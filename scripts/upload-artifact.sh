@@ -6,8 +6,8 @@
 #
 # 필요한 환경:
 #   BARO_MEMO_TOKEN   보드의 사람 토큰 (에이전트 기기: ~/.config/baro-memo/env)
-#   BARO_FILES_URL    스토어 API (기본 http://192.168.0.220/files/api — 밖에서는
-#                     http://gobackdev.iptime.org:22030/files/api)
+#   BARO_FILES_URL    (선택) 스토어 API. 서버에서 받은 사본에는 **받아 간 주소가 이미 박혀**
+#                     있으므로 보통 필요 없다. 저장소에서 그대로 꺼낸 사본에만 필요하다.
 #
 # 성질: 같은 파일로 다시 실행하면 **이어서** 올린다(세션 id 를 파일 옆 .baro-upload 에 남겨
 # 두고, 서버의 missing 목록만큼만 보낸다). 청크가 끊기면 그 청크만 다시 간다. 세션이 만들어진
@@ -17,7 +17,16 @@ set -euo pipefail
 
 FILE="${1:?usage: upload-artifact.sh <file> [name]}"
 NAME="${2:-$(basename "$FILE")}"
-API="${BARO_FILES_URL:-http://192.168.0.220/files/api}"
+# 기본 주소는 **서버가 서빙하면서 박아 준다**({{API}} → 그 사람이 이 스크립트를 받아 간 주소).
+# 사내망으로 받으면 사내망, 터널로 받으면 터널이 들어온다 — help 가 Host 에서 ORIGIN 을 만드는
+# 것과 같은 이유다. 여기에 주소를 박아 두면 밖에 선 사람에게만 깨지고, 그 사람은 원인을 못 본다.
+API="${BARO_FILES_URL:-{{API}}}"
+case "$API" in
+  *"{{"*)
+    echo "이 사본은 서버가 아니라 저장소에서 왔습니다 — BARO_FILES_URL 을 정하고 다시 실행하세요." >&2
+    echo "  예: BARO_FILES_URL=http://192.168.0.220/files/api $0 <파일>" >&2
+    exit 1;;
+esac
 TOKEN="${BARO_MEMO_TOKEN:?BARO_MEMO_TOKEN is not set — source ~/.config/baro-memo/env}"
 CHUNK=$((80 * 1024 * 1024))
 STATE="${FILE}.baro-upload"
