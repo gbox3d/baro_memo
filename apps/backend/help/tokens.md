@@ -38,6 +38,23 @@ which is exactly what this service was built to end.
 
 A revoked token answers 401 from the moment of revocation; there is no grace period.
 
+## Who am I — identity for sibling services
+
+`GET {{BASE}}/api/auth/whoami`
+
+Resolves the presented token to an identity, so that other services on this host (the artifact
+store, for one) can reuse these tokens instead of issuing their own — tokens are issued in exactly
+one place, and revocation stays one action.
+
+| Presented | Answer |
+|---|---|
+| a user token | 200 `{user: "kim", admin: false}` |
+| the admin token | 200 `{user: null, admin: true}` — valid, but there is nobody to attribute. A consuming service must allow reads and refuse attribution-bearing writes on it, mirroring the board's own rule |
+| anything else | 401 `memo_token_invalid`, or 503 `no_tokens_issued` when zero tokens exist |
+
+Consumers should cache answers per token for a minute or two. Revocation therefore propagates with
+that delay to sibling services — the same soft-revocation stance the board itself takes.
+
 ## Admin routes (operator only)
 
 These answer to the **admin token**, presented in the same headers as above. The operator sets it

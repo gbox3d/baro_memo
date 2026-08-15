@@ -49,7 +49,7 @@ baro_calrory 의 memo 축(`/api/memos`)을 독립 서비스로 분리한 것입�
 apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   src/           server.mjs · memo/ · auth/ · admin/ · core/
   help/          AI 에이전트용 사용 설명서 (영문) — GET /api/help 로 서빙
-  test/          node --test (120 tests)
+  test/          node --test (125 tests)
 apps/admin/      관리자 페이지 — 토큰 발급/폐기 + 보드 열람. 무빌드 정적 (public/)
   test/          브라우저 없이 도는 DOM 검사 (40) — 최소 DOM 을 심어 app.js 를 그대로 실행한다
 skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙한다
@@ -66,7 +66,7 @@ DB 는 저장소 밖에 둡니다 — 운영 호스트는 `/mnt/data/baro_memo_d
 
 ```bash
 pnpm start     # = node apps/backend/src/server.mjs
-pnpm test      # node --test, 160개 (백엔드 120 + 관리자 페이지 40)
+pnpm test      # node --test, 165개 (백엔드 125 + 관리자 페이지 40)
 ```
 
 설정은 `.env` 하나이고 변경은 재시작해야 반영됩니다.
@@ -103,7 +103,7 @@ pnpm admin:token       # 값과 파일 경로를 찍는다. 없으면 만들고(
 
 > 나중에 값을 다시 볼 때도 같은 명령입니다 — 「토큰 확인」 절.
 
-**4. 검사** — `pnpm test`. 160개가 다 통과해야 합니다.
+**4. 검사** — `pnpm test`. 165개가 다 통과해야 합니다.
 
 **5. 프로세스**
 

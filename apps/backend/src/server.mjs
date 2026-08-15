@@ -22,6 +22,7 @@ import { AuditStore } from "./memo/audit-store.mjs";
 import { TokenStore } from "./auth/token-store.mjs";
 import { createMemoRoutes } from "./memo/routes.mjs";
 import { createAdminRoutes } from "./admin/routes.mjs";
+import { createAuthRoutes } from "./auth/routes.mjs";
 import { buildLiveState, serveHelp } from "./core/help-doc.mjs";
 import { json } from "./core/http.mjs";
 
@@ -54,6 +55,7 @@ const tokenStore = new TokenStore(db);
 const routers = [
   createMemoRoutes({ memoStore, tokenStore, commentStore, voteStore, auditStore, adminToken: ADMIN_TOKEN }),
   createAdminRoutes({ tokenStore, auditStore, adminToken: ADMIN_TOKEN }),
+  createAuthRoutes({ tokenStore, adminToken: ADMIN_TOKEN }),
 ];
 
 // 외부 URL 접두사. nginx 스니펫이 X-Forwarded-Prefix: /memo 를 붙인다 — 직접 포트로 온

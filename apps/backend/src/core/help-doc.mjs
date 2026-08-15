@@ -66,6 +66,9 @@ export const AGENT_ROUTES = Object.freeze([
   { method: "DELETE", path: "/api/memos/:memoId/comments/:commentId", topic: "memo",
     summary: "Remove one comment. The path must name the post it belongs to, else 404 comment_not_found. Needs a user token" },
 
+  { method: "GET", path: "/api/auth/whoami", topic: "tokens",
+    summary: "Resolve the presented token to an identity — {user, admin}. A user token answers {user, admin:false}; the admin token answers {user:null, admin:true} (valid, but nobody to attribute — services must refuse attribution-bearing writes on it). 401/503 mirror the read gate. Built for sibling services (e.g. the artifact store) so tokens are issued in exactly one place; cache answers for a minute or two" },
+
   { method: "GET", path: "/api/admin/tokens", topic: "tokens",
     summary: "Every issued token with its user and revocation state. Admin token only" },
   { method: "POST", path: "/api/admin/tokens", topic: "tokens",

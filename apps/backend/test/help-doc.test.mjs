@@ -18,7 +18,7 @@ import { TokenStore } from "../src/auth/token-store.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(here, "..", "src");
-const ROUTE_FILES = ["server.mjs", "memo/routes.mjs", "admin/routes.mjs"];
+const ROUTE_FILES = ["server.mjs", "memo/routes.mjs", "admin/routes.mjs", "auth/routes.mjs"];
 const BASE = "/memo";
 
 function liveRig() {
