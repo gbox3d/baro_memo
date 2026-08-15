@@ -31,12 +31,12 @@
 
 - 저장소 경로: `/home/gblab-dgx-01/works/baro_memo`
 - 대상 플랫폼: Node 24 + pm2 (`baro-memo`), 사내망. 외부 접점은 nginx `/memo/` 와 터널
-- 현재 버전: 0.7.1 — 읽기도 토큰(0.5.0), 삭제·수정 이력이 두 층으로(0.6.0/0.7.0),
-  초대 메시지의 주소는 `.env` 의 `RELEASE_BASE_URL`(0.7.1)
+- 현재 버전: 0.8.0 — 중요도 점수(1인 1글 1~5, `?sort=score`). 앞선 축: 읽기도 토큰(0.5.0),
+  삭제·수정 이력이 두 층으로(0.6.0/0.7.0), 초대 주소는 `.env` 의 `RELEASE_BASE_URL`(0.7.1)
 - 메인 엔트리포인트: `apps/backend/src/server.mjs` (`pnpm start`)
 - 관리자 페이지: `apps/admin/public/` — nginx 가 디스크에서 바로 서빙한다(빌드도 재시작도 없다).
   검사는 `apps/admin/test/` 에서 브라우저 없이 돈다
-- 검사: `pnpm test` 140개 (백엔드 105 + 관리자 페이지 35)
+- 검사: `pnpm test` 160개 (백엔드 120 + 관리자 페이지 40)
 - DB: `/mnt/data/baro_memo_db/memo.db` — 저장소 밖이다. `.env` 의 `MEMO_DB` 가 정본
 - 분리 원본: `/home/gblab-dgx-01/works/baro_calrory` 의 memo 축 (분리 완료)
 

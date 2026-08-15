@@ -11,6 +11,7 @@ import test from "node:test";
 import { openDb } from "../src/core/db.mjs";
 import { MemoStore } from "../src/memo/memo-store.mjs";
 import { CommentStore } from "../src/memo/comment-store.mjs";
+import { VoteStore } from "../src/memo/vote-store.mjs";
 import { AuditStore } from "../src/memo/audit-store.mjs";
 import { TokenStore } from "../src/auth/token-store.mjs";
 import { createMemoRoutes } from "../src/memo/routes.mjs";
@@ -25,14 +26,15 @@ function rig(users = ["kim"], { adminToken = "adm_test_value" } = {}) {
   const commentStore = new CommentStore(db);
   const tokenStore = new TokenStore(db);
   const tokens = Object.fromEntries(users.map((u) => [u, tokenStore.issue({ user: u }).token]));
+  const voteStore = new VoteStore(db);
   const auditStore = new AuditStore(db);
-  const router = createMemoRoutes({ memoStore, tokenStore, commentStore, auditStore, adminToken });
+  const router = createMemoRoutes({ memoStore, tokenStore, commentStore, voteStore, auditStore, adminToken });
   // 읽기도 토큰이 필요해졌으므로 기본 헤더가 있다. 문턱 자체를 보는 검사는 `{}` 를 명시해 끈다.
   const reader = users.length ? { "x-memo-token": tokens[users[0]] } : {};
   return {
     handle: (method, path, body = {}, headers = reader) => router(method, path, null, body, headers),
     list: (query = "", headers = reader) => router("GET", "/api/memos", query, {}, headers),
-    adminToken, memoStore, commentStore, auditStore, tokenStore, tokens,
+    adminToken, memoStore, commentStore, voteStore, auditStore, tokenStore, tokens,
   };
 }
 
@@ -487,4 +489,164 @@ test("아무도 손대지 않은 글의 이력은 비어 있다 — 없는 것�
   await handle("PATCH", `/api/memos/${made.memo.id}`, { body: "b" }, { "x-memo-token": tokens.kim });
   const res = await handle("GET", `/api/memos/${made.memo.id}/history`);
   assert.deepEqual(res.json, { count: 0, total: 0, memoId: made.memo.id, history: [] });
+});
+
+// ---- 중요도 -------------------------------------------------------------------------------
+//
+// 이 축의 계약은 하나로 요약된다: **쓰는 것은 언제나 자기 점수 하나**다. 그래서 PUT 이고
+// (멱등하다), 그래서 남의 표가 사라지는 경로가 없고, 그래서 이력이 필요 없다.
+
+test("PUT 은 자기 점수를 놓는다 — 두 번 보내도 두 배가 되지 않는다", async () => {
+  const { handle, tokens } = rig(["kim", "lee"]);
+  const asKim = { "x-memo-token": tokens.kim };
+  const asLee = { "x-memo-token": tokens.lee };
+  const { json: made } = await handle("POST", "/api/memos", { body: "b" }, asKim);
+  const path = `/api/memos/${made.memo.id}/score`;
+
+  const first = await handle("PUT", path, { value: 4 }, asKim);
+  assert.equal(first.status, 200);
+  assert.equal(first.json.score, 4);
+  assert.equal(first.json.voters, 1);
+  assert.equal(first.json.myScore, 4);
+
+  // 재시도는 안전해야 한다 — 이 성질이 없으면 점수는 열의(熱意)를 재게 된다.
+  const again = await handle("PUT", path, { value: 4 }, asKim);
+  assert.equal(again.json.score, 4, "같은 값을 다시 보내는 것은 아무 일도 아니다");
+
+  const changed = await handle("PUT", path, { value: 1 }, asKim);
+  assert.equal(changed.json.score, 1, "덮이는 것은 자기 값이다");
+
+  const other = await handle("PUT", path, { value: 5 }, asLee);
+  assert.equal(other.json.score, 6);
+  assert.equal(other.json.voters, 2);
+  assert.equal(other.json.myScore, 5, "myScore 는 부르는 토큰의 값이다");
+  assert.deepEqual(other.json.scores.map((s) => [s.user, s.value]), [["lee", 5], ["kim", 1]]);
+});
+
+test("점수는 1..5 이고, 0 은 취소하는 길을 가리킨다", async () => {
+  const { handle, tokens } = rig();
+  const mine = { "x-memo-token": tokens.kim };
+  const { json: made } = await handle("POST", "/api/memos", { body: "b" }, mine);
+  const path = `/api/memos/${made.memo.id}/score`;
+
+  for (const value of [6, -1, 2.5, "x", null]) {
+    const res = await handle("PUT", path, { value }, mine);
+    assert.equal(res.status, 400, `통과하면 안 된다: ${String(value)}`);
+    assert.equal(res.json.code, "invalid_score");
+  }
+  const zero = await handle("PUT", path, { value: 0 }, mine);
+  assert.equal(zero.json.code, "invalid_score");
+  assert.match(zero.json.error, /DELETE/, "0 을 보낸 사람이 다음에 무엇을 할지가 그 문장에 있어야 한다");
+  // 본문 자체가 없는 것도 같은 거절이다 — 조용히 1 로 떨어지지 않는다.
+  assert.equal((await handle("PUT", path, {}, mine)).json.code, "invalid_score");
+});
+
+test("DELETE 는 자기 표만 거둔다 — 남의 표는 그대로다", async () => {
+  const { handle, tokens } = rig(["kim", "lee"]);
+  const asKim = { "x-memo-token": tokens.kim };
+  const asLee = { "x-memo-token": tokens.lee };
+  const { json: made } = await handle("POST", "/api/memos", { body: "b" }, asKim);
+  const path = `/api/memos/${made.memo.id}/score`;
+  await handle("PUT", path, { value: 5 }, asKim);
+  await handle("PUT", path, { value: 3 }, asLee);
+
+  const gone = await handle("DELETE", path, {}, asKim);
+  assert.equal(gone.json.deleted, true);
+  assert.equal(gone.json.score, 3);
+  assert.equal(gone.json.myScore, 0);
+  assert.deepEqual(gone.json.scores.map((s) => s.user), ["lee"]);
+
+  const twice = await handle("DELETE", path, {}, asKim);
+  assert.equal(twice.json.deleted, false, "없던 표를 거두는 것은 실패가 아니다 — 이미 원하는 상태다");
+  assert.equal(twice.json.score, 3);
+});
+
+test("관리자 토큰은 점수를 볼 수는 있어도 줄 수는 없다", async () => {
+  const { handle, tokens, adminToken } = rig();
+  const asOperator = { "x-memo-token": adminToken };
+  const { json: made } = await handle("POST", "/api/memos", { body: "b" }, { "x-memo-token": tokens.kim });
+  const path = `/api/memos/${made.memo.id}/score`;
+  await handle("PUT", path, { value: 4 }, { "x-memo-token": tokens.kim });
+
+  const read = await handle("GET", path, {}, asOperator);
+  assert.equal(read.status, 200);
+  assert.equal(read.json.score, 4);
+  assert.equal(read.json.myScore, 0, "그 값에는 사람이 없으니 표도 없다");
+
+  // 쓰기는 사람 토큰만이다 — 찍을 사람이 없는 표는 귀속이 없다.
+  assert.equal((await handle("PUT", path, { value: 5 }, asOperator)).json.code, "admin_token_cannot_write");
+  assert.equal((await handle("DELETE", path, {}, asOperator)).json.code, "admin_token_cannot_write");
+  assert.equal((await handle("GET", path, {}, {})).status, 401, "읽기에도 토큰이 필요하다");
+});
+
+test("없는 메모에는 점수를 줄 수 없고, 지워진 글의 점수는 404 다", async () => {
+  const { handle, tokens } = rig();
+  const mine = { "x-memo-token": tokens.kim };
+  assert.equal((await handle("PUT", "/api/memos/9999/score", { value: 3 }, mine)).json.code, "memo_not_found");
+  assert.equal((await handle("GET", "/api/memos/abc/score", {}, mine)).json.code, "memo_not_found");
+
+  const { json: made } = await handle("POST", "/api/memos", { body: "b" }, mine);
+  const path = `/api/memos/${made.memo.id}/score`;
+  await handle("PUT", path, { value: 5 }, mine);
+  await handle("DELETE", `/api/memos/${made.memo.id}`, {}, mine);
+  // 이력과 다른 판단이다 — 표는 글과 함께 사라졌고, 여기서 0 을 돌려주면 "아무도 중요하다고
+  // 안 했다" 는 **다른 사실**이 된다.
+  assert.equal((await handle("GET", path, {}, mine)).status, 404);
+
+  // 이 경로에 없는 메서드는 405 다. 404 로 흘리면 "경로가 없다"는 거짓말이 된다.
+  const { json: other } = await handle("POST", "/api/memos", { body: "b2" }, mine);
+  assert.equal((await handle("POST", `/api/memos/${other.memo.id}/score`, { value: 3 }, mine)).status, 405);
+});
+
+test("목록과 한 건이 같은 세 값을 싣고, sort=score 로 중요도순이 된다", async () => {
+  const { handle, list, tokens } = rig(["kim", "lee"]);
+  const asKim = { "x-memo-token": tokens.kim };
+  const asLee = { "x-memo-token": tokens.lee };
+  const { json: first } = await handle("POST", "/api/memos", { body: "first" }, asKim);
+  const { json: second } = await handle("POST", "/api/memos", { body: "second" }, asKim);
+  await handle("PUT", `/api/memos/${first.memo.id}/score`, { value: 5 }, asKim);
+  await handle("PUT", `/api/memos/${first.memo.id}/score`, { value: 2 }, asLee);
+
+  const byNew = await list("", asLee);
+  assert.deepEqual(byNew.json.memos.map((m) => m.id), [second.memo.id, first.memo.id], "기본은 최신순 그대로다");
+
+  const byScore = await list("sort=score", asLee);
+  assert.deepEqual(byScore.json.memos.map((m) => m.id), [first.memo.id, second.memo.id]);
+  const [top] = byScore.json.memos;
+  assert.equal(top.score, 7);
+  assert.equal(top.voters, 2);
+  assert.equal(top.myScore, 2, "목록의 myScore 도 부르는 토큰의 값이다");
+
+  // 한 건도 같은 세 값을 준다 — 목록과 한 건이 다르면 소비자가 파서를 둘 두게 된다.
+  const one = await handle("GET", `/api/memos/${first.memo.id}`, {}, asLee);
+  assert.equal(one.json.memo.score, 7);
+  assert.equal(one.json.memo.myScore, 2);
+  assert.deepEqual(one.json.scores.map((s) => [s.user, s.value]), [["kim", 5], ["lee", 2]]);
+
+  // 모르는 정렬 이름은 조용히 기본값으로 떨어지지 않는다.
+  const bogus = await list("sort=popular", asLee);
+  assert.equal(bogus.status, 400);
+  assert.equal(bogus.json.code, "invalid_param");
+});
+
+test("세 표면이 같은 수를 말한다 — 여러 사람이 **같은 값**을 줬을 때가 갈라지는 자리다", async () => {
+  const { handle, list, tokens } = rig(["kim", "lee", "park"]);
+  const { json: made } = await handle("POST", "/api/memos", { body: "b" }, { "x-memo-token": tokens.kim });
+  const id = made.memo.id;
+  // 셋이 **똑같이 1 점씩.** 값이 서로 다르면 "사람 수"와 "서로 다른 값의 수"가 우연히 같아져,
+  // 두 수치가 갈라져도 검사가 통과한다(합계·사람 수를 두 곳에서 세면 실제로 갈라진다).
+  for (const who of ["kim", "lee", "park"]) {
+    await handle("PUT", `/api/memos/${id}/score`, { value: 1 }, { "x-memo-token": tokens[who] });
+  }
+
+  const asKim = { "x-memo-token": tokens.kim };
+  const fromScore = (await handle("GET", `/api/memos/${id}/score`, {}, asKim)).json;
+  const fromOne = (await handle("GET", `/api/memos/${id}`, {}, asKim)).json.memo;
+  const fromList = (await list("", asKim)).json.memos.find((m) => m.id === id);
+
+  for (const [where, got] of [["score", fromScore], ["one", fromOne], ["list", fromList]]) {
+    assert.equal(got.score, 3, `${where} 의 합계가 다르다`);
+    assert.equal(got.voters, 3, `${where} 의 사람 수가 다르다 — 같은 값을 준 세 사람은 세 사람이다`);
+    assert.equal(got.myScore, 1, `${where} 의 내 점수가 다르다`);
+  }
 });

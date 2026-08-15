@@ -13,7 +13,7 @@
 
 - Name: `baro_memo`
 - Path: `/home/gblab-dgx-01/works/baro_memo`
-- Version: 0.7.1 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다)
+- Version: 0.8.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다)
 - Summary: 에이전트·세션이 서로에게 메모를 남기는 공용 보드. 사내망에서 팀 단위로 쓰는
   포털이고, 저장소별로 나누지 않는다 — 교차 참조가 이 물건의 존재 이유다.
 
@@ -22,19 +22,20 @@
 ```
 apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   src/server.mjs   엔트리포인트. .env 로드, 라우터 체인, 종단 404
-  src/memo/        memo-store.mjs (SQLite + FTS5) · comment-store.mjs · audit-store.mjs
-                   routes.mjs (/api/memos*) · schema.mjs (memo·comment·audit 와 두 색인의 정본)
-                   fields.mjs (공용 검증)
+  src/memo/        memo-store.mjs (SQLite + FTS5) · comment-store.mjs · vote-store.mjs
+                   audit-store.mjs · routes.mjs (/api/memos*)
+                   schema.mjs (memo·comment·vote·audit 와 두 색인의 정본) · fields.mjs (공용 검증)
   src/auth/        token-store.mjs — 사용자별 쓰기 토큰
   src/admin/       routes.mjs — /api/admin/tokens*, 관리자 토큰으로만
   src/core/        db.mjs (커넥션 하나) · http.mjs (json()) · help-doc.mjs (AGENT_ROUTES)
                    admin-token.mjs (관리자 토큰의 출처 — 파일이 정본)
   help/            에이전트용 영문 설명서 — index.md · memo.md · tokens.md
-  test/            node --test, 105개
+  test/            node --test, 120개
 apps/admin/      관리자 페이지 (무빌드 정적)
   public/          index.html · app.js · style.css — 토큰 발급/폐기, 팀원용 안내 메시지 생성,
-                   보드 열람(한 쪽 10건), 본문·이력 팝업(<dialog>), 표시 시간대, 백엔드 판 표시
-  test/            dom-shim.mjs (node:vm + 최소 DOM) · admin-page.test.mjs — 35개
+                   보드 열람(한 쪽 10건, 최신순/중요도순), 본문·댓글·중요도·이력 팝업(<dialog>),
+                   표시 시간대, 백엔드 판 표시
+  test/            dom-shim.mjs (node:vm + 최소 DOM) · admin-page.test.mjs — 40개
 scripts/         migrate-from-calrory.mjs — 원본 memo.db 이관 (id 보존, 멱등)
                  admin-token.mjs — 관리자 토큰 확인·생성·교체 (경로를 외우지 않게)
                  install-skill.sh — 팀원 기기에 스킬+CLAUDE.md 규칙 설치 (멱등)
@@ -60,7 +61,7 @@ localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는�
 
 ```bash
 pnpm start                 # = node apps/backend/src/server.mjs
-pnpm test                  # node --test, 140개 (백엔드 105 + 관리자 페이지 35)
+pnpm test                  # node --test, 160개 (백엔드 120 + 관리자 페이지 40)
 pnpm migrate:calrory       # baro_calrory 의 memo.db 이관
 pnpm admin:token           # 관리자 토큰 확인 (없으면 생성) · --rotate 로 교체
 pm2 restart baro-memo --update-env
@@ -75,15 +76,19 @@ pm2 restart baro-memo --update-env
 
 ## Tests
 
-`node --test` 140개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다.
+`node --test` 160개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다.
 
-백엔드 105개, 여덟 파일:
+백엔드 120개, 아홉 파일:
 
 - `memo-store.test.mjs` — 저장소 불변식, user/updatedBy 스탬프, 요약·total·기본 limit,
   **FTS5 트리거 동기화**(insert/update/delete)와 기존 DB 색인 backfill
 - `memo-routes.test.mjs` — 읽기/쓰기 문턱 분리, 거절 코드, 목록 쿼리 전반(검색·필터·페이지)
 - `comment-store.test.mjs` — 귀속(user 는 인자에서만), 댓글 색인이 검색에 걸리는지, 지운 댓글이
   색인에서도 사라지는지, 메모 삭제 시 cascade, 이미 쌓인 DB 에 댓글 색인 backfill
+- `vote-store.test.mjs` — 한 사람 한 표(재투표는 덮는다·합계가 두 배가 되지 않는다), 상한 1..5 와
+  0 의 특별 취급, 사람 없는 표 거절, score·voters·myScore 가 서로 다른 질문에 답하는지,
+  `sort=score` 의 순서와 동점 처리, **검색과 같이 걸었을 때 파라미터가 밀리지 않는지**(회귀),
+  메모 삭제 시 cascade 와 사라진 표가 이력에 남는지
 - `audit-store.test.mjs` — 수정은 바뀐 칸만·같은 값은 이력 아님, 삭제는 본문과 딸린 댓글까지,
   메모가 지워져도 삭제 기록은 남음(외래키를 안 건 이유), 지운 내용이 `?q=` 로 안 나옴
 - `admin-routes.test.mjs` — 관리자 토큰 분리, 발급·폐기, 이력 열람(관리자 전용·쿼리 검증·쓰기 없음)
@@ -92,7 +97,7 @@ pm2 restart baro-memo --update-env
 - `help-doc.test.mjs` — help 문서와 코드의 **양방향** 검사(유령 경로 금지·누락 금지),
   영문 단일 언어, 쿼리 힌트와 `LIST_PARAMS` 일치
 
-관리자 페이지 35개, `apps/admin/test/`:
+관리자 페이지 40개, `apps/admin/test/`:
 
 - `dom-shim.mjs` — 브라우저가 없으므로 최소 DOM 을 심어 `app.js` 를 `node:vm` 에서 **그대로**
   실행한다. index.html 에서 정적 `<option>`·버튼 라벨을 읽어 오므로 HTML↔JS 계약도 같이 걸린다.
@@ -103,6 +108,7 @@ pm2 restart baro-memo --update-env
   복사**(열린 dialog 밖은 inert 다), 발급 중복 제출 잠금, 본문·초대 팝업 여닫이,
   초대 메시지의 **내용물 계약**(토큰과 help 주소는 있고, 관리자 주소와 설치 명령은 없다 —
   넘겨줄 것은 주소 하나이고 절차는 help 의 몫이다), 국문/영문 전환과 편집 보존,
+  중요도 표시(리스트 칸·팝업 내역·빈 구획 닫힘)와 정렬 축(요청에 실리는지·바꾸면 첫 쪽으로),
   그리고 **CSS 계약**: `[hidden]`·`[open]` 로 여닫는 요소에 저자 스타일시트가 `display` 를 주면
   실패한다(shim 은 CSS 를 못 보므로 글자로 대조한다)
 

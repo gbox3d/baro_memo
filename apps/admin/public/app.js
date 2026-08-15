@@ -12,9 +12,10 @@ const PAGE = 10;
 // bodies: 목록은 본문을 싣지 않는다(요약 색인이다). 펼친 메모의 전문만 id 로 받아 여기 담아
 // 둔다 — 같은 메모를 다시 펼칠 때 또 부르지 않게.
 const state = {
-  tokens: [], memos: [], bodies: new Map(), comments: new Map(), history: new Map(), invites: new Map(),
+  tokens: [], memos: [], bodies: new Map(), comments: new Map(), history: new Map(),
+  scores: new Map(), invites: new Map(),
   boardUrl: null,
-  offset: 0, total: 0,
+  offset: 0, total: 0, sort: "new",
   selectedToken: null, selectedMemo: null,
 };
 
@@ -526,6 +527,7 @@ function renderMemos() {
       <td>${esc(m.author) || "—"}</td>
       <td>${esc(m.title) || "—"}</td>
       <td>${m.commentCount || ""}</td>
+      <td title="${esc(scoreTitle(m))}">${esc(m.score || "")}</td>
       <td title="${esc(stampTitle(m.updatedAt))}">${esc(stamp(m.updatedAt))}</td>`;
     tr.addEventListener("click", () => selectMemo(m.id));
     return tr;
@@ -542,13 +544,48 @@ function renderMemos() {
   const sel = state.memos.find((m) => m.id === state.selectedMemo);
   if (!sel) { closeMemo(); return; }
   $("#memo-dialog-title").textContent = `#${sel.id} · ${sel.status} · ${sel.title || "(제목 없음)"}`
-    + (sel.commentCount ? ` · 댓글 ${sel.commentCount}` : "");
+    + (sel.commentCount ? ` · 댓글 ${sel.commentCount}` : "")
+    + (sel.score ? ` · 중요도 ${sel.score}` : "");
   // 전문이 아직 없으면 미리보기로 자리를 채운다 — 빈 칸은 "본문이 없다"로 읽힌다.
   const full = state.bodies.get(sel.id);
   const text = full ?? `${sel.bodyPreview}${sel.bodyLength > sel.bodyPreview.length ? "…" : ""}`;
   $("#memo-detail").textContent = text + (sel.updatedBy ? `\n\n— last write: ${sel.updatedBy}` : "");
   renderComments(sel.id);
+  renderScores(sel.id);
   renderHistory(sel.id);
+}
+
+// ---- 중요도 (보기만) ------------------------------------------------------------------------
+//
+// 이 페이지는 점수를 **주지 않는다.** 든 것이 관리자 토큰이고 그 값에는 찍을 사람이 없어서,
+// 서버가 403 admin_token_cannot_write 로 거절한다 — 댓글과 같은 경계다(쓰기는 에이전트의 일).
+//
+// 리스트 칸에는 합만 넣고 사람 수는 tooltip 으로 민다(리스트는 상태만 보인다). 대신 팝업에서는
+// 누가 몇 점을 줬는지를 그대로 편다 — 합만 보면 한 사람의 확신(5×1)과 팀의 합의(1×5)가 같아
+// 보이고, 그 둘은 이 보드에서 전혀 다른 사실이다.
+function scoreTitle(m) {
+  if (!m.voters) return "아직 아무도 중요도를 주지 않았습니다";
+  return `${m.voters}명이 준 ${m.score}점`;
+}
+
+function renderScores(memoId) {
+  const box = $("#memo-scores");
+  const list = state.scores.get(memoId) || [];
+  box.hidden = list.length === 0; // 아무도 안 준 글에 빈 구획을 남기지 않는다
+  box.replaceChildren(...list.map((s) => {
+    const row = document.createElement("div");
+    row.className = "score";
+
+    const value = document.createElement("b");
+    value.textContent = String(s.value);
+
+    const who = document.createElement("span");
+    who.textContent = s.user || "—";
+    who.title = s.at ? stampTitle(s.at) : "";
+
+    row.append(value, who);
+    return row;
+  }));
 }
 
 // 이 글에 무슨 일이 있었나. 서버가 주는 것도 사실뿐이라(내용은 관리자 축), 그대로 한 줄씩 적는다.
@@ -653,6 +690,8 @@ async function selectMemo(id) {
     const [one, past] = await Promise.all([call(`memos/${id}`), call(`memos/${id}/history`)]);
     state.bodies.set(id, one.memo.body);
     state.comments.set(id, one.comments || []);
+    // 표는 한 건 응답이 같이 준다(사람 수만큼이라 짧다) — 부르는 횟수를 늘리지 않는다.
+    state.scores.set(id, one.scores || []);
     state.history.set(id, past.history || []);
     if (state.selectedMemo === id) renderMemos();
   } catch (err) { sayError(err); }
@@ -668,14 +707,37 @@ function turnPage(delta) {
 $("#memo-prev").addEventListener("click", () => turnPage(-1));
 $("#memo-next").addEventListener("click", () => turnPage(1));
 
+// 정렬 축. 고른 값은 시간대·언어와 같은 이유로 남긴다 — 매 방문 재선택이 마찰 전부다.
+// 축이 바뀌면 **첫 쪽으로 돌아간다**: "3쪽"은 정렬이 정하는 자리라, 그대로 두면 사람이
+// 방금 고른 순서의 30번째부터 보게 된다.
+const SORT_KEY = "baro-memo-sort";
+const sortSelect = $("#memo-sort");
+state.sort = localStorage.getItem(SORT_KEY) === "score" ? "score" : "new";
+sortSelect.value = state.sort;
+
+sortSelect.addEventListener("change", () => {
+  state.sort = sortSelect.value === "score" ? "score" : "new";
+  localStorage.setItem(SORT_KEY, state.sort);
+  state.offset = 0;
+  loadMemos();
+});
+
 async function loadMemos() {
   try {
     // 새로고침은 캐시를 버린다 — 남겨 두면 남이 고친 본문이나 새로 달린 댓글을 놓친다.
     state.bodies.clear();
     state.comments.clear();
+    state.scores.clear();
     state.history.clear();
     // 요약 색인 한 쪽만 받는다. 보드가 커져도 이 페이지가 무거워지지 않는다.
-    const page = await call(`memos?limit=${PAGE}&offset=${state.offset}`);
+    //
+    // **기본 축이면 `sort` 를 아예 안 붙인다.** 이 페이지는 nginx 가 워킹트리에서 바로 서빙하고
+    // 캐시도 꺼 두었으므로, `git pull` 만으로 브라우저는 새 app.js 를 받는다 — 백엔드는 pm2
+    // 재시작 전까지 옛 판이다. 모르는 쿼리 이름을 이 서버는 400 `unknown_param` 으로 거절하므로,
+    // 기본값까지 실어 보내면 **그 창 동안 보드가 통째로 빈 화면이 된다**(배포가 낡았는지 보려고
+    // 여는 바로 그 도구에서). 중요도순을 고른 사람만 새 백엔드를 요구하게 둔다.
+    const sortParam = state.sort === "new" ? "" : `&sort=${state.sort}`;
+    const page = await call(`memos?limit=${PAGE}&offset=${state.offset}${sortParam}`);
     // 마지막 쪽에서 메모가 지워지면 offset 이 total 을 넘어 빈 화면이 된다 — 한 쪽 당겨 다시.
     if (page.count === 0 && state.offset > 0) {
       state.offset = Math.max(0, Math.floor((page.total - 1) / PAGE) * PAGE);
@@ -701,6 +763,10 @@ function sayError(err) {
     // 0.5.0 부터 보드 읽기에도 토큰이 필요하다. 이 페이지는 관리자 토큰으로 읽는다.
     memo_token_invalid: "보드를 읽으려면 토큰이 필요합니다 — 위 칸에 관리자 토큰을 넣으세요.",
     no_tokens_issued: "이 배포에 발급된 토큰이 0개입니다 — 하나 발급하면 보드가 열립니다.",
+    // 이 페이지와 백엔드는 따로 늙는다(정적 파일 대 pm2). 이 페이지가 보낸 이름을 서버가 모르면
+    // 십중팔구 서버가 더 낡은 것이다 — 헤더의 판 번호가 그 자리에서 답을 준다.
+    unknown_param: "백엔드가 이 페이지보다 낡았습니다 — 제목 옆 판 번호를 확인하고 재시작하세요.",
+    invalid_param: "백엔드가 이 요청을 거절했습니다 — 제목 옆 판 번호가 이 페이지와 맞는지 보세요.",
   };
   say(hints[err.code] || `${err.status || ""} ${err.message}`.trim(), true);
 }

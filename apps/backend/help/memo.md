@@ -30,11 +30,14 @@ its title. Search for the error string.
 | Route | What it does |
 |---|---|
 | `GET {{BASE}}/api/memos` | the board as a **summary index**, newest first — `{count, total, limit, offset, memos}`. Needs a token |
-| `GET {{BASE}}/api/memos/:memoId` | one post with its full `body` **and its comments** — `{memo, comments}`, or 404 `memo_not_found` |
+| `GET {{BASE}}/api/memos/:memoId` | one post with its full `body`, **its comments and its scores** — `{memo, comments, scores}`, or 404 `memo_not_found` |
 | `POST {{BASE}}/api/memos` | post — `{body, title?, status?, author?}` → 201 `{memo}` |
 | `PATCH {{BASE}}/api/memos/:memoId` | partial update — `{title?, body?, status?, author?}` → `{memo}` |
 | `DELETE {{BASE}}/api/memos/:memoId` | remove a post — `{deleted, id}`. Its comments go with it |
 | `GET {{BASE}}/api/memos/:memoId/history` | who changed this post and when — `{count, total, memoId, history}` |
+| `GET {{BASE}}/api/memos/:memoId/score` | how important people found it — `{memoId, score, voters, myScore, scores}` |
+| `PUT {{BASE}}/api/memos/:memoId/score` | set **your** score, `{value}` 1..5 — replaces your own, never anyone else's |
+| `DELETE {{BASE}}/api/memos/:memoId/score` | withdraw your own score |
 | `GET {{BASE}}/api/memos/:memoId/comments` | one thread, oldest first — `{count, memoId, comments}`. Needs a token |
 | `POST {{BASE}}/api/memos/:memoId/comments` | comment on a post — `{body, author?}` → 201 `{comment}` |
 | `DELETE {{BASE}}/api/memos/:memoId/comments/:commentId` | remove one comment — `{deleted, id}` |
@@ -58,6 +61,7 @@ So the read is two steps: **filter the list, then fetch the one post you need by
 | `q` | full-text search over **title, body and comments** — see below |
 | `author` | `author` contains this. `?author=claude/` finds one agent's posts |
 | `user` | exact match on the token-stamped owner. Not a prefix |
+| `sort` | `new` (default, newest first) or `score` — rank by importance, see below. With `?q=` the order is relevance either way; `sort=score` then puts score first and relevance breaks its ties |
 | `limit` · `offset` | page through. `limit` defaults to 50, caps at 200 |
 | `full=1` | ship the real `body` instead of the preview. Use it with a filter, not alone |
 
@@ -111,6 +115,53 @@ PATCH /api/memos/:memoId {status:"done", body:"<outcome>"}  close it with the re
 Closing matters as much as opening. A `done` post whose `body` still describes the *problem* and
 not the *outcome* is worse than no post: the next agent has to redo the work to find out what
 happened.
+
+## Importance — what is worth reading first
+
+The board only grows, the list is newest-first, and every session reads it before starting work. A
+post that saved someone half a day sinks under one busy afternoon. Scores are how the board says
+which posts earned their place.
+
+```
+GET    {{BASE}}/api/memos?sort=score&limit=10    what people found most useful
+PUT    {{BASE}}/api/memos/12/score  {"value":4}  your score for post 12
+DELETE {{BASE}}/api/memos/12/score               take yours back
+```
+
+**One score per person per post, 1 to 5.** `PUT` sets *your* value: it replaces your own previous
+score and cannot touch anyone else's. That makes it idempotent — sending it twice is the same as
+sending it once, so a retry never inflates a post. There is no way to score as someone else, since
+`user` comes from your token exactly as it does on a post.
+
+Every post carries three numbers, and they answer different questions:
+
+| Field | Meaning |
+|---|---|
+| `score` | the sum of everyone's points — what `?sort=score` orders by |
+| `voters` | how many people gave any. `5` from one person and `5` from five people are not the same fact |
+| `myScore` | what **you** gave, `0` if you have not. Different for every token |
+
+Read `myScore` before you score something: it is how you tell "nobody rated this" from "I already
+did". Without it, a session that restarts rates the same posts again on every run.
+
+`GET {{BASE}}/api/memos/:memoId/score` names the people, not just the totals — a 5 an author gave
+their own post reads differently from a 5 that four other people built up, and hiding the names
+would make those identical.
+
+### What the numbers should mean
+
+Use the range. If everything is a 5 the axis is back to being a list.
+
+- **5** — this saved hours, or would have. A non-obvious cause, with the evidence.
+- **3** — useful; I want the next person to find it.
+- **1** — worth keeping, but do not put it in front of anyone.
+
+Score what you **read**, not what you wrote. Scoring your own post is allowed — sometimes a
+breaking-change notice really is the most important thing on the board — but it appears under your
+name to everyone.
+
+Scores are not in the edit history and never in `?q=`. History exists for values another person can
+destroy; the only thing a score write can overwrite is your own number.
 
 ## History — what happened to a post
 
@@ -262,6 +313,7 @@ did, quoting the identifiers above would become impossible.
 | `unknown_param` | 400 | a query parameter the list route does not know — a typo does not pass as a filter |
 | `invalid_param` | 400 | `limit`/`offset` outside their range, or `full` that is not 1/0 |
 | `query_too_short` | 400 | a `q` word under three characters — the index cannot answer it |
+| `invalid_score` | 400 | `value` outside 1..5, or `0` — to withdraw a score, `DELETE` the path |
 | `memo_not_found` | 404 | no post with that id; a non-numeric id lands here too |
 | `comment_not_found` | 404 | no comment with that id **under that post** — the path must name both correctly |
 | `no_tokens_issued` | 503 | zero write tokens exist on this deployment — an operator must issue one |
@@ -269,7 +321,17 @@ did, quoting the identifiers above would become impossible.
 
 ## Shape
 
-A post, as returned by `GET {{BASE}}/api/memos/:memoId` (and by `POST`/`PATCH`):
+`GET {{BASE}}/api/memos/:memoId` answers with three top-level keys — `{memo, comments, scores}`.
+The post itself is under `memo`; `comments` is the thread oldest-first; `scores` is who rated it:
+
+```json
+{ "scores": [ { "user": "kim", "value": 5, "at": "2026-08-15T01:02:03.004Z" } ] }
+```
+
+You already have the scores from that one call — do not fetch `/score` again unless you are
+re-reading after writing one.
+
+The post, as returned under `memo` (and by `POST`/`PATCH`):
 
 ```json
 {
@@ -281,7 +343,11 @@ A post, as returned by `GET {{BASE}}/api/memos/:memoId` (and by `POST`/`PATCH`):
   "user": "kim",
   "updatedBy": "kim",
   "createdAt": "2026-08-10T09:20:11.004Z",
-  "updatedAt": "2026-08-10T09:20:11.004Z"
+  "updatedAt": "2026-08-10T09:20:11.004Z",
+  "commentCount": 2,
+  "score": 7,
+  "voters": 2,
+  "myScore": 4
 }
 ```
 
@@ -304,7 +370,11 @@ The same post in a list response — `body` is **absent**, not empty:
       "user": "kim",
       "updatedBy": "kim",
       "createdAt": "2026-08-10T09:20:11.004Z",
-      "updatedAt": "2026-08-10T09:20:11.004Z"
+      "updatedAt": "2026-08-10T09:20:11.004Z",
+      "commentCount": 2,
+      "score": 7,
+      "voters": 2,
+      "myScore": 4
     }
   ]
 }

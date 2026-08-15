@@ -1,7 +1,7 @@
-// 보드의 스키마 — memo 와 comment, 그리고 각자의 전문 검색 색인.
+// 보드의 스키마 — memo·comment·vote·audit 과 앞의 둘에 걸리는 전문 검색 색인.
 //
-// **두 테이블을 한 곳에서 세우는 이유**: 목록이 메모마다 `commentCount` 를 싣고 검색이
-// 댓글 색인까지 훑는다. 즉 memo 축의 질의가 comment 테이블 없이는 돌지 않는다. 스토어마다
+// **한 곳에서 세우는 이유**: 목록이 메모마다 `commentCount` 와 `score` 를 싣고 검색이 댓글
+// 색인까지 훑는다. 즉 memo 축의 질의가 comment·vote 테이블 없이는 돌지 않는다. 스토어마다
 // 자기 테이블만 만들게 두면 "MemoStore 만 만든 코드"가 no such table 로 죽는다.
 //
 // AUTOINCREMENT: 삭제된 id 를 재사용하지 않는다. 재사용하면 "3번 메모"라고 적어 둔 외부
@@ -31,6 +31,28 @@ const TABLES = `
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS comment_by_memo ON comment(memo_id, id);
+
+  -- 중요도. 한 사람이 한 글에 1~5 점을 준다.
+  --
+  -- **카운터 한 칸이 아니라 행이다.** memo.score 를 숫자로 들고 +1 하면 세 가지를 잃는다:
+  -- "내가 이미 줬나"에 답할 수 없고(그래서 같은 세션이 재시작마다 또 준다), 1인당 상한을
+  -- 스키마가 못 지키고, 5점이 한 사람의 확신인지 다섯 사람의 합의인지 구분이 사라진다.
+  -- UNIQUE(memo_id, user) 가 "한 사람 한 표"를 저장소 수준에서 못 박는다 — 다시 주면 자기
+  -- 행이 덮이고, 덮이는 것은 언제나 자기 것뿐이다(그래서 이 last-write-wins 는 안전하다).
+  --
+  -- author(세션)를 두지 않는다. 표는 사람의 것이고, 같은 사람의 두 세션이 두 표가 되면
+  -- 그 순간 이 수치는 "몇 명이 중요하다고 했나"가 아니라 "몇 번 눌렸나"가 된다.
+  --
+  -- CHECK 는 상한을 DB 에도 박는다. **주의**: 이미 만들어진 DB 의 CHECK 는 코드를 고쳐도
+  -- 바뀌지 않는다. vote-store.mjs 의 SCORE_LIMIT 을 넓히려면 테이블을 다시 세워야 한다.
+  CREATE TABLE IF NOT EXISTS vote (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    memo_id INTEGER NOT NULL REFERENCES memo(id) ON DELETE CASCADE,
+    user    TEXT NOT NULL,
+    value   INTEGER NOT NULL CHECK (value BETWEEN 1 AND 5),
+    at      TEXT NOT NULL,
+    UNIQUE (memo_id, user)
+  );
 
   -- 삭제·수정 이력. 사라지거나 덮인 값을 여기 남긴다 — 보드는 여러 세션이 남의 글을 고치고
   -- 지우는 곳이고, "누가 언제 무엇을 지웠나"는 사후에만 물어보게 된다.

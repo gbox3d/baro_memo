@@ -30,6 +30,10 @@ export const PREVIEW_CHARS = 200;
 // 소비자가 안다 — 조용한 절단이 아니다.
 export const LIST_LIMIT = Object.freeze({ default: 50, max: 200 });
 
+// 목록의 정렬 축. 기본은 최신순이고 **그것을 바꾸지 않는다** — 소비자가 "새 것부터"에 기대어
+// 짜 놓은 것이 이미 있다. score 는 추가된 축이지 대체가 아니다.
+export const MEMO_SORTS = Object.freeze(["new", "score"]);
+
 function status(value) {
   const s = text(value, "status") || "open";
   if (!MEMO_STATUSES.includes(s)) {
@@ -56,7 +60,17 @@ function toMemo(row) {
     // 댓글은 **개수만** 싣는다. 목록이든 한 건이든, 댓글 본문은 그 메모의 댓글 경로로 받는다 —
     // 목록에 전문을 싣지 않는 것과 같은 이유이고, 한 건에서도 대화가 길어지면 같은 세금이 된다.
     commentCount: row.comment_count ?? 0,
+    ...scoreOf(row),
   };
+}
+
+// 중요도 셋은 목록과 한 건이 같은 모양으로 싣는다. 셋을 다 주는 이유가 각각 있다:
+//   score   합계 — 정렬에 쓰는 값
+//   voters  준 사람 수 — 합만 보면 한 사람의 확신(5×1)과 팀의 합의(1×5)가 구분되지 않는다
+//   myScore 내가 준 값(0 이면 안 줬다) — 없으면 부르는 쪽이 "이미 줬나"를 알 길이 없어
+//           세션이 재시작할 때마다 다시 준다. 부르는 토큰마다 다른 값이다.
+function scoreOf(row) {
+  return { score: row.score ?? 0, voters: row.voters ?? 0, myScore: row.my_score ?? 0 };
 }
 
 // 목록 항목. `body` 를 빈 문자열로 두지 않고 **아예 빼는** 이유: 빈 문자열이면 소비자는
@@ -74,6 +88,7 @@ function toSummary(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     commentCount: row.comment_count ?? 0,
+    ...scoreOf(row),
   };
 }
 
@@ -81,6 +96,16 @@ function toSummary(row) {
 // comment_by_memo 색인이 있다). 목록에서 이 값을 빼면 "댓글이 있는지" 를 알려고 게시물마다
 // 한 번씩 더 부르게 되고, 그게 정확히 목록을 요약 색인으로 만든 이유의 반대다.
 const COMMENT_COUNT = "(SELECT COUNT(*) FROM comment WHERE comment.memo_id = memo.id) AS comment_count";
+
+// 중요도. 댓글 수와 같은 규모의 상관 서브쿼리다 — UNIQUE(memo_id, user) 가 곧 색인이라
+// 한 메모의 표는 그 색인으로 바로 모인다.
+//
+// `my_score` 에는 물음표가 하나 있다. **SELECT 목록은 FROM 보다 텍스트가 앞서므로 이 값이
+// 첫 번째 파라미터다** — 검색(q)의 두 물음표보다 먼저 바인딩된다. 순서를 바꾸면 조용히
+// 엉뚱한 값끼리 묶인다(검색어가 사람 이름 자리로 들어가는 종류의 사고다).
+const SCORE_SUM = "(SELECT COALESCE(SUM(value), 0) FROM vote WHERE vote.memo_id = memo.id) AS score";
+const VOTER_COUNT = "(SELECT COUNT(*) FROM vote WHERE vote.memo_id = memo.id) AS voters";
+const MY_SCORE = "COALESCE((SELECT value FROM vote WHERE vote.memo_id = memo.id AND vote.user = ?), 0) AS my_score";
 
 // 검색 적중 한 벌. 두 색인(메모 제목·본문 / 댓글 본문)의 적중을 합치고, 메모마다 관련도가
 // 가장 좋은 한 줄만 남긴다(ROW_NUMBER). 한 메모가 본문과 댓글 양쪽에서 걸리면 결과가 두
@@ -146,6 +171,7 @@ export class MemoStore {
     const {
       status = null, q = "", author = "", user = "",
       full = false, limit = LIST_LIMIT.default, offset = 0,
+      sort = "new", viewer = "",
     } = options;
 
     // q 가 있으면 두 색인(메모·댓글)의 적중을 합쳐 메모에 붙인다. 칼럼은 전부 memo. 로 못
@@ -171,13 +197,23 @@ export class MemoStore {
       memo.id, memo.title, memo.status, memo.author, memo.user, memo.updated_by,
       memo.created_at, memo.updated_at,
       substr(memo.body, 1, ${PREVIEW_CHARS}) AS body_preview, length(memo.body) AS body_length`;
+    // 보는 사람이 없으면(관리자 토큰으로 읽는 경우) 물음표째 뺀다 — 빈 문자열을 넘기면
+    // user='' 로 저장된 옛 행과 맞아떨어질 여지가 생긴다.
+    const mine = viewer ? MY_SCORE : "0 AS my_score";
+    const viewerParams = viewer ? [viewer] : [];
     // 검색은 관련도순(bm25 는 음수이고 작을수록 좋다), 그냥 목록은 최신순. 정렬 키가 created_at
     // 이 아니라 id 인 이유: 같은 초의 두 건은 시각으로 순서가 안 선다.
+    //
+    // `sort=score` 는 그 위에 얹힌다. 동점은 다시 관련도(검색일 때)와 최신순으로 갈린다 —
+    // 안 그러면 0 점끼리의 순서가 SQLite 의 사정으로 정해져 쪽을 넘길 때마다 달라진다.
+    const tie = q ? "hit.rank, memo.id DESC" : "memo.id DESC";
+    const order = sort === "score" ? `score DESC, ${tie}` : tie;
+    // my_score 의 물음표가 SELECT 목록에 있으므로 **viewer 가 첫 파라미터**다(위 상수의 주석).
     const rows = this.db.prepare(`
-      SELECT ${columns}, ${COMMENT_COUNT}${q ? ", hit.snippet AS snippet, hit.matched_in AS matched_in" : ""}
+      SELECT ${columns}, ${COMMENT_COUNT}, ${SCORE_SUM}, ${VOTER_COUNT}, ${mine}${q ? ", hit.snippet AS snippet, hit.matched_in AS matched_in" : ""}
       FROM ${from}${clause}
-      ORDER BY ${q ? "hit.rank, memo.id DESC" : "memo.id DESC"}
-      LIMIT ? OFFSET ?`).all(...params, limit, offset);
+      ORDER BY ${order}
+      LIMIT ? OFFSET ?`).all(...viewerParams, ...params, limit, offset);
 
     return {
       total,
@@ -192,8 +228,13 @@ export class MemoStore {
     };
   }
 
-  get(id) {
-    return toMemo(this.db.prepare(`SELECT memo.*, ${COMMENT_COUNT} FROM memo WHERE id = ?`).get(id));
+  // viewer 는 "이 값을 누구에게 보여 주는가" 다 — myScore 하나만 그 사람에 따라 달라진다.
+  // 안 넘기면 0 이고, 그건 "안 줬다"와 같은 값이다(0 은 유효한 점수가 아니다).
+  get(id, viewer = "") {
+    const mine = viewer ? MY_SCORE : "0 AS my_score";
+    return toMemo(this.db
+      .prepare(`SELECT memo.*, ${COMMENT_COUNT}, ${SCORE_SUM}, ${VOTER_COUNT}, ${mine} FROM memo WHERE id = ?`)
+      .get(...(viewer ? [viewer] : []), id));
   }
 
   counts() {
@@ -211,7 +252,8 @@ export class MemoStore {
     const { lastInsertRowid } = this.db
       .prepare("INSERT INTO memo (title, body, status, author, user, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run(text(input.title, "title"), body, status(input.status), text(input.author, "author"), user, user, now, now);
-    return this.get(Number(lastInsertRowid));
+    // 쓴 사람이 곧 이 응답을 받는 사람이다 — myScore 를 그 사람 기준으로 채운다.
+    return this.get(Number(lastInsertRowid), user);
   }
 
   // 부분 갱신. 보내지 않은 필드는 건드리지 않는다. updated_by 는 매번 토큰의 사용자로 찍힌다.
@@ -233,7 +275,7 @@ export class MemoStore {
     sets.push("updated_by = ?", "updated_at = ?");
     values.push(user, new Date().toISOString(), id);
     this.db.prepare(`UPDATE memo SET ${sets.join(", ")} WHERE id = ?`).run(...values);
-    const after = this.get(id);
+    const after = this.get(id, user); // 고친 사람이 이 응답을 받는다(myScore 는 보는 사람의 값이다)
 
     // 바뀐 칸만 남긴다. 안 바뀐 칸까지 실으면 이력을 읽는 쪽이 무엇이 바뀌었는지 다시
     // 비교해야 하고, 같은 값으로 덮은 PATCH 는 애초에 이력이 아니다.
@@ -250,20 +292,28 @@ export class MemoStore {
   }
 
   // 삭제는 되돌릴 수 없다. 사라지는 것을 **전부** 이력에 남긴다 — 메모 본문과, cascade 로
-  // 같이 사라지는 댓글까지. 댓글을 빼면 "그 스레드에 있던 답" 이 추적 밖으로 나간다.
+  // 같이 사라지는 댓글과 표까지. 댓글을 빼면 "그 스레드에 있던 답" 이, 표를 빼면 "여러 명이
+  // 중요하다고 했던 글" 이라는 사실이 추적 밖으로 나간다.
   remove(id, user = "") {
     const memo = this.get(id);
     if (!memo) return false;
     const comments = this.db.prepare("SELECT * FROM comment WHERE memo_id = ? ORDER BY id").all(id)
       .map((c) => ({ id: c.id, user: c.user, author: c.author, body: c.body, createdAt: c.created_at }));
+    // 표도 cascade 로 같이 사라진다. "네 사람이 중요하다고 했던 글" 이라는 사실은 지워지면
+    // 어디에도 안 남으므로 여기 싣는다 — 댓글을 싣는 것과 같은 이유다.
+    const votes = this.db.prepare("SELECT user, value, at FROM vote WHERE memo_id = ? ORDER BY value DESC, id").all(id);
 
     const deleted = this.db.prepare("DELETE FROM memo WHERE id = ?").run(id).changes > 0;
     if (deleted) {
+      // myScore 는 **보는 사람의 값**이라 보관본에 들어가면 뜻이 없다("누구의 0 인가"). 표는
+      // votes 가 사람과 함께 그대로 들고 있으므로 잃는 사실도 없다.
+      const { myScore, ...archived } = memo;
       this.audit.record({
         action: "memo_delete", actor: user, memoId: id,
         summary: `deleted "${memo.title || "(no title)"}"`
-          + (comments.length ? ` with ${comments.length} comment(s)` : ""),
-        before: { memo, comments },
+          + (comments.length ? ` with ${comments.length} comment(s)` : "")
+          + (votes.length ? ` and ${memo.score} point(s) from ${votes.length} voter(s)` : ""),
+        before: { memo: archived, comments, votes },
       });
     }
     return deleted;

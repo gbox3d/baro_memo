@@ -16,7 +16,7 @@
 //
 // 반환 규약: 이 축의 경로가 아니면 null.
 import { json } from "../core/http.mjs";
-import { LIST_LIMIT, MEMO_STATUSES, toMemoId } from "./memo-store.mjs";
+import { LIST_LIMIT, MEMO_SORTS, MEMO_STATUSES, toMemoId } from "./memo-store.mjs";
 import { toCommentId } from "./comment-store.mjs";
 import { isAdminToken } from "../core/admin-token.mjs";
 
@@ -44,7 +44,7 @@ function fail(code, message) {
 //
 // 여기 없는 이름은 거절한다. 조용히 무시하면 `?staus=open` 이 보드 전체를 200 으로 돌려주고,
 // 소비자는 필터가 걸린 줄 안다 — 본문의 오타를 no_fields 로 거절하는 것과 같은 결이다.
-const LIST_PARAMS = new Set(["status", "q", "author", "user", "limit", "offset", "full"]);
+const LIST_PARAMS = new Set(["status", "q", "author", "user", "limit", "offset", "full", "sort"]);
 
 function asParams(query) {
   return query instanceof URLSearchParams ? query : new URLSearchParams(query || "");
@@ -90,8 +90,15 @@ export function parseListQuery(query) {
     }
   }
 
+  // 정렬 축. 기본은 최신순이고 그대로 둔다 — 이미 그것에 기대어 짜인 소비자가 있다.
+  const sort = (params.get("sort") || "new").trim() || "new";
+  if (!MEMO_SORTS.includes(sort)) {
+    throw fail("invalid_param", `sort must be one of ${MEMO_SORTS.join(" · ")}.`);
+  }
+
   return {
     status,
+    sort,
     q: (params.get("q") || "").trim(),
     author: (params.get("author") || "").trim(),
     user: (params.get("user") || "").trim(),
@@ -102,7 +109,7 @@ export function parseListQuery(query) {
 }
 
 export function createMemoRoutes(ctx) {
-  const { memoStore, tokenStore, commentStore, auditStore = null, adminToken = "" } = ctx;
+  const { memoStore, tokenStore, commentStore, voteStore = null, auditStore = null, adminToken = "" } = ctx;
 
   return async function handleMemo(method, pathname, query = null, body = {}, headers = {}) {
     if (pathname !== "/api/memos" && !pathname.startsWith("/api/memos/")) return null;
@@ -150,7 +157,9 @@ export function createMemoRoutes(ctx) {
       try {
         // 저장소도 던진다 — 검색어가 trigram 하한보다 짧으면 query_too_short.
         const options = parseListQuery(query);
-        const { total, memos } = memoStore.list(options);
+        // viewer 는 쿼리가 아니라 **토큰**에서 온다 — myScore 는 부르는 사람마다 다른 값이고,
+        // 쿼리로 받으면 남의 표를 조회하는 길이 열린다.
+        const { total, memos } = memoStore.list({ ...options, viewer: user || "" });
         return json(200, {
           count: memos.length, total, limit: options.limit, offset: options.offset, memos,
         });
@@ -177,6 +186,50 @@ export function createMemoRoutes(ctx) {
       if (!auditStore) return json(503, { error: "Audit trail is not wired on this deployment.", code: "audit_unavailable" });
       const { total, history: entries } = auditStore.historyFor(memoId);
       return json(200, { count: entries.length, total, memoId, history: entries });
+    }
+
+    // ---- 중요도 ---------------------------------------------------------------------------
+    //
+    // 한 사람이 한 글에 1~5 점. `PUT` 은 **자기 점수**를 놓는 것이라 멱등하다 — 두 번 나가도
+    // 두 배가 되지 않는다. POST 였으면 "5 점 더"로 읽혔을 것이고, 그건 재시도가 순위를 바꾸는
+    // 설계다. 남의 표를 건드리는 경로는 없다(user 는 늘 토큰에서 온다).
+    //
+    // 이력(audit)에 남기지 않는다. 이 축에서 덮이는 것은 언제나 자기 값 하나뿐이라, 본문
+    // last-write-wins 처럼 "남의 것이 사라지는" 경우가 없다 — 남길 사고가 없다.
+    const score = pathname.match(/^\/api\/memos\/([^/]+)\/score$/);
+    if (score) {
+      const memoId = toMemoId(score[1]);
+      const memo = memoId === null ? null : memoStore.get(memoId);
+      // 이력과 달리 지워진 글에는 답하지 않는다 — 표는 글과 함께 사라졌고, 여기서 0 을
+      // 돌려주면 "아무도 중요하다고 안 했다"는 다른 사실이 된다.
+      if (!memo) return json(404, { error: "No such memo.", code: "memo_not_found", id: score[1] });
+      if (!["GET", "PUT", "DELETE"].includes(method)) {
+        return json(405, { error: "Method not supported on this path.", method, pathname });
+      }
+      // **순서가 뜻이다**(이력 라우트와 같게): 없는 글은 404, 없는 메서드는 405, 그 다음에야
+      // 503 이다. 503 은 "운영자가 고치면 되는 일" 이라는 뜻이라, 오타나 영영 지원 안 될 메서드에
+      // 그걸 돌려주면 부르는 쪽은 자기 잘못을 고칠 생각을 못 하고 재시도만 한다.
+      if (!voteStore) return json(503, { error: "Scoring is not wired on this deployment.", code: "score_unavailable" });
+
+      // 셋 다 같은 모양으로 답한다 — 부르는 쪽이 응답마다 다른 파서를 두지 않게.
+      //
+      // 합계·사람 수·내 점수는 **memoStore 가 정본**이다. 여기서 따로 세면 같은 수치의 SQL 이
+      // 두 벌이 되고, 한쪽만 고쳐지는 날 목록과 이 라우트가 같은 글을 두고 다른 수를 말한다
+      // (관리자 토큰 비교를 core 로 올린 것과 같은 이유다).
+      const payload = () => {
+        const { score: sum, voters, myScore } = memoStore.get(memoId, user || "");
+        return { memoId, score: sum, voters, myScore, scores: voteStore.listFor(memoId) };
+      };
+
+      if (method === "GET") return json(200, payload());
+      if (method === "PUT") {
+        try {
+          voteStore.set(memoId, body?.value, user);
+          return json(200, payload());
+        } catch (error) { return badRequest(error); }
+      }
+      const deleted = voteStore.clear(memoId, user);
+      return json(200, { deleted, ...payload() });
     }
 
     // ---- 댓글 -----------------------------------------------------------------------------
@@ -221,12 +274,19 @@ export function createMemoRoutes(ctx) {
       const id = toMemoId(item[1]);
       // 숫자가 아닌 id 는 그 자체로 없는 문서다. 소비자가 할 일이 "요청을 고쳐라"가 아니라
       // "그런 메모는 없다"로 같으므로 400 이 아니라 404.
-      const memo = id === null ? null : memoStore.get(id);
+      const memo = id === null ? null : memoStore.get(id, user || "");
       if (!memo) return json(404, { error: "No such memo.", code: "memo_not_found", id: item[1] });
 
       // 한 건은 **문서**다. 댓글을 같이 실어 주지 않으면 소비자는 commentCount 를 보고 한 번 더
-      // 부른다 — 목록이 요약인 것과 달리, 여기서 아끼는 것은 아무것도 없다.
-      if (method === "GET") return json(200, { memo, comments: commentStore.listFor(id) });
+      // 부른다 — 목록이 요약인 것과 달리, 여기서 아끼는 것은 아무것도 없다. 표도 같다(사람 수
+      // 만큼이라 짧고, 누가 중요하다고 했는지가 그 글을 읽을지 정하는 근거다).
+      if (method === "GET") {
+        return json(200, {
+          memo,
+          comments: commentStore.listFor(id),
+          scores: voteStore ? voteStore.listFor(id) : [],
+        });
+      }
 
       if (method === "PATCH") {
         try { return json(200, { memo: memoStore.update(id, body, user) }); }

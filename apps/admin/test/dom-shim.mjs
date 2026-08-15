@@ -106,7 +106,7 @@ function makeSelect(options) {
 
 // 경로별 응답. 실제 백엔드의 모양만 맞춘다(version·tokens·memos).
 // 요청은 전부 기록한다 — "몇 번 나갔는가"가 검사할 값인 경우가 있다(중복 발급).
-function makeFetch({ version, fail, tokens, memos, requests, boardUrl }) {
+function makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTotal }) {
   return async (url, options = {}) => {
     const path = String(url);
     const method = options.method || "GET";
@@ -125,27 +125,31 @@ function makeFetch({ version, fail, tokens, memos, requests, boardUrl }) {
     const body = path.includes("/version") ? { version }
       : path.includes("/health") ? { ok: true, version, boardUrl }
       : path.includes("/admin/tokens") ? { count: tokens.length, tokens }
-        : one ? (() => { const m = memos.find((x) => String(x.id) === one[1]); return { memo: m, comments: m?.comments || [] }; })()
-          : { count: memos.length, total: memos.length, limit: 10, offset: 0, memos };
+        : one ? (() => { const m = memos.find((x) => String(x.id) === one[1]); return { memo: m, comments: m?.comments || [], scores: m?.scores || [] }; })()
+          // total 은 따로 받을 수 있다 — 쪽 넘김을 검사하려면 "뒷장이 있다"가 필요하다.
+          : { count: memos.length, total: boardTotal ?? memos.length, limit: 10, offset: 0, memos };
     return { ok: true, status: 200, json: async () => body };
   };
 }
 
 export function loadAdminPage({
-  storedTz = null, version = "9.9.9", fail = false,
+  storedTz = null, storedSort = null, version = "9.9.9", fail = false,
   // 기본값이 **평문 HTTP** 다. 실제 배포가 그렇고, shim 이 없는 API 를 있다고 흉내 내면
   // "검사는 통과하는데 화면에서는 죽는" 자리가 생긴다 — 복사 버튼이 정확히 그랬다.
   clipboard = false, execCommand = true, boardUrl = "http://board.example/memo",
-  tokens = [], memos = [], adminToken = "",
+  tokens = [], memos = [], boardTotal = null, adminToken = "",
 } = {}) {
   const store = new Map(storedTz ? [["baro-memo-tz", storedTz]] : []);
+  if (storedSort) store.set("baro-memo-sort", storedSort);
   if (adminToken) store.set("baro-memo-admin-token", adminToken);
   const copied = [];       // clipboard 로 실제로 넘어간 값
   const execCopied = [];   // execCommand 경로로 선택된 textarea 의 값
   const requests = [];     // 나간 요청 전부 (method·path)
   const tz = makeSelect(staticZoneOptions());
   const inviteLang = makeSelect(staticOptionsOf("invite-lang"));
-  const nodes = new Map([["#tz", tz], ["#invite-lang", inviteLang]]);
+  // 정렬 상자의 항목도 HTML 에 있다 — 스크립트가 멎어도 보이고 동작해야 하는 것은 같다.
+  const memoSort = makeSelect(staticOptionsOf("memo-sort"));
+  const nodes = new Map([["#tz", tz], ["#invite-lang", inviteLang], ["#memo-sort", memoSort]]);
   for (const { id, label } of staticButtons()) {
     const btn = el("button");
     btn.textContent = label;
@@ -218,7 +222,7 @@ export function loadAdminPage({
       setItem: (k, v) => store.set(k, String(v)),
       removeItem: (k) => store.delete(k),
     },
-    fetch: makeFetch({ version, fail, tokens, memos, requests, boardUrl }),
+    fetch: makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTotal }),
     // 보안 컨텍스트가 아니면 navigator.clipboard 는 **속성 자체가 없다**. undefined 를 넣어
     // 두는 것과 같지만, 실제 브라우저의 모양을 그대로 흉내 낸다.
     navigator: clipboard ? { clipboard: { writeText: async (t) => { copied.push(t); } } } : {},
@@ -240,7 +244,7 @@ export function loadAdminPage({
     // 리스트에서 한 줄 고르기 — 액션(복사·폐기)은 고른 뒤에만 의미가 있다.
     pickTokenRow: (i = 0) => sandbox.document.querySelector("#token-list tbody").children[i]._on.click(),
     pickMemoRow: (i = 0) => sandbox.document.querySelector("#memo-list tbody").children[i]._on.click(),
-    dialog, inviteDialog, inviteLang,
+    dialog, inviteDialog, inviteLang, memoSort,
   };
 }
 

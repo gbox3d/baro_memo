@@ -61,11 +61,17 @@
         <button id="memo-prev" type="button" disabled>◀</button>
         <span id="memo-range"></span>
         <button id="memo-next" type="button" disabled>▶</button>
+        <!-- 정렬. 중요도는 읽은 사람들이 준 점수의 합이고, 이 페이지는 그것을 보기만 한다
+             (관리자 토큰에는 찍을 사람이 없어 표를 줄 수 없다). -->
+        <select id="memo-sort" title="정렬 — 중요도는 읽은 사람들이 준 점수의 합입니다">
+          <option value="new">최신순</option>
+          <option value="score">중요도순</option>
+        </select>
       </div>
     </div>
 
     <table id="memo-list">
-      <thead><tr><th>#</th><th>상태</th><th>user</th><th>author</th><th>제목</th><th>댓글</th><th>갱신</th></tr></thead>
+      <thead><tr><th>#</th><th>상태</th><th>user</th><th>author</th><th>제목</th><th>댓글</th><th>중요도</th><th>갱신</th></tr></thead>
       <tbody></tbody>
     </table>
   </section>
@@ -83,6 +89,8 @@
   <div id="memo-scroll">
     <pre id="memo-detail"></pre>
     <section id="memo-comments" hidden></section>
+    <!-- 누가 이 글을 중요하다고 했나. 합만 보면 한 사람의 확신과 여러 사람의 합의가 같아 보인다. -->
+    <section id="memo-scores" hidden></section>
     <!-- 이 글에 무슨 일이 있었나. 사실만(언제·누가·무엇을) — 내용은 관리자 축에 있다. -->
     <section id="memo-history" hidden></section>
   </div>

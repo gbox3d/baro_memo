@@ -17,6 +17,7 @@ import { readAdminToken } from "./core/admin-token.mjs";
 import { openDb } from "./core/db.mjs";
 import { MemoStore } from "./memo/memo-store.mjs";
 import { CommentStore } from "./memo/comment-store.mjs";
+import { VoteStore } from "./memo/vote-store.mjs";
 import { AuditStore } from "./memo/audit-store.mjs";
 import { TokenStore } from "./auth/token-store.mjs";
 import { createMemoRoutes } from "./memo/routes.mjs";
@@ -46,11 +47,12 @@ const pkg = JSON.parse(await readFile(join(here, "..", "package.json"), "utf8"))
 const db = openDb(DB_PATH);
 const memoStore = new MemoStore(db);
 const commentStore = new CommentStore(db);
+const voteStore = new VoteStore(db);
 const auditStore = new AuditStore(db);
 const tokenStore = new TokenStore(db);
 
 const routers = [
-  createMemoRoutes({ memoStore, tokenStore, commentStore, auditStore, adminToken: ADMIN_TOKEN }),
+  createMemoRoutes({ memoStore, tokenStore, commentStore, voteStore, auditStore, adminToken: ADMIN_TOKEN }),
   createAdminRoutes({ tokenStore, auditStore, adminToken: ADMIN_TOKEN }),
 ];
 

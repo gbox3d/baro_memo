@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { loadAdminPage, publicFile, staticZoneOptions, zonePicked } from "./dom-shim.mjs";
+import { loadAdminPage, publicFile, staticOptionsOf, staticZoneOptions, zonePicked } from "./dom-shim.mjs";
 
 // 서머타임 경계에서 날짜가 넘어가는 순간. UTC 로는 13일 저녁, 서울로는 14일 새벽이다.
 const INSTANT = "2026-08-13T16:22:33.004Z";
@@ -529,4 +529,90 @@ test("닫기와 가림막으로 닫히고, 고른 토큰이 없으면 열리지 
   await none.settled;
   none.node("#token-invite")._on.click(); // 아무것도 고르지 않은 상태
   assert.equal(none.inviteDialog.open, false);
+});
+
+// ---- 중요도 -------------------------------------------------------------------------------
+//
+// 이 페이지는 점수를 **주지 않는다**(관리자 토큰은 쓰기가 막혀 있다). 보이는 것과 고르는 것,
+// 즉 리스트의 한 칸과 팝업의 내역, 그리고 정렬 축이 이 축의 전부다.
+
+test("리스트에 중요도 칸이 붙고, 아무도 안 준 글은 비운다", async () => {
+  const scored = { ...MEMO, id: 20, score: 7, voters: 2 };
+  const page = loadAdminPage({ memos: [scored, MEMO] });
+  await page.settled;
+
+  const rows = page.node("#memo-list tbody").children;
+  // 리스트는 상태만 보인다 — 칸에는 합계, 사람 수는 tooltip 으로 민다.
+  assert.match(rows[0].innerHTML, /<td title="2명이 준 7점">7<\/td>/);
+  assert.match(rows[1].innerHTML, /<td title="아직 아무도 중요도를 주지 않았습니다"><\/td>/,
+    "0 을 찍으면 '점수가 0점'과 '아직 아무도 안 줬다'가 같아 보인다");
+
+  // 표 머리에도 칸이 있어야 한다 — 값만 있고 이름이 없으면 그 숫자가 무엇인지 알 수 없다.
+  assert.match(publicFile("index.html"), /<th>중요도<\/th>/);
+});
+
+test("팝업이 누가 몇 점을 줬는지 편다 — 아무도 안 줬으면 구획이 없다", async () => {
+  const scored = {
+    ...MEMO, id: 21, score: 7, voters: 2,
+    scores: [{ user: "kim", value: 5, at: INSTANT }, { user: "lee", value: 2, at: INSTANT }],
+  };
+  const page = loadAdminPage({ memos: [scored, MEMO] });
+  await page.settled;
+  page.pickMemoRow(0);
+  await drain();
+
+  const box = page.node("#memo-scores");
+  assert.equal(box.hidden, false);
+  // 합만 보면 한 사람의 확신(5×1)과 팀의 합의(1×5)가 같아 보인다 — 그래서 사람과 값을 편다.
+  assert.deepEqual(box.children.map((r) => [r.children[0].textContent, r.children[1].textContent]),
+    [["5", "kim"], ["2", "lee"]]);
+  assert.match(page.node("#memo-dialog-title").textContent, /중요도 7/);
+
+  page.node("#memo-dialog-close")._on.click();
+  page.pickMemoRow(1);
+  await drain();
+  assert.equal(page.node("#memo-scores").hidden, true, "빈 구획은 '고장 났나'로 읽힌다");
+  assert.equal(page.node("#memo-dialog-title").textContent.includes("중요도"), false);
+});
+
+test("정렬 항목은 HTML 에 있고, 고른 축이 요청과 저장소에 남는다", async () => {
+  // 상자가 비면 스크립트가 멎었을 때 컨트롤이 화면에서 사라진다 — 시간대 상자와 같은 규칙.
+  assert.deepEqual(staticOptionsOf("memo-sort").map((o) => o.value), ["new", "score"]);
+
+  const page = loadAdminPage({ memos: [MEMO] });
+  await page.settled;
+  assert.equal(page.memoSort.value, "new", "기본은 최신순 — 서버의 기본과 같다");
+  // **기본 축이면 파라미터를 아예 안 보낸다.** 이 페이지는 워킹트리에서 바로 서빙되므로
+  // git pull 직후·pm2 재시작 전에는 백엔드가 더 낡다. 그 창에서 모르는 쿼리 이름은 400
+  // unknown_param 이고, 그러면 배포를 확인하러 연 도구에서 보드가 통째로 빈 화면이 된다.
+  assert.equal(page.requests.at(-1).path.includes("sort="), false);
+
+  page.memoSort.value = "score";
+  page.memoSort._on.change();
+  await drain();
+  assert.match(page.requests.at(-1).path, /sort=score/);
+  assert.equal(page.store.get("baro-memo-sort"), "score");
+});
+
+test("정렬을 바꾸면 첫 쪽으로 돌아간다 — '3쪽'은 정렬이 정하는 자리다", async () => {
+  const page = loadAdminPage({ memos: [MEMO], boardTotal: 30 });
+  await page.settled;
+
+  page.node("#memo-next")._on.click();
+  await drain();
+  assert.match(page.requests.at(-1).path, /offset=10/);
+
+  page.memoSort.value = "score";
+  page.memoSort._on.change();
+  await drain();
+  const last = page.requests.at(-1).path;
+  assert.match(last, /offset=0/, "축이 바뀌었는데 offset 이 남으면 방금 고른 순서의 11번째부터 보게 된다");
+  assert.match(last, /sort=score/);
+});
+
+test("저장해 둔 정렬 축으로 열린다", async () => {
+  const page = loadAdminPage({ memos: [MEMO], storedSort: "score" });
+  await page.settled;
+  assert.equal(page.memoSort.value, "score");
+  assert.match(page.requests.find((r) => r.path.includes("memos?")).path, /sort=score/);
 });

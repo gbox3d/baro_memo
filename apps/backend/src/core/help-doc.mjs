@@ -34,13 +34,13 @@ export const AGENT_ROUTES = Object.freeze([
     summary: "Backend's own version" },
 
   { method: "GET", path: "/api/memos", topic: "memo",
-    summary: "Summary index of the board, newest first — {count, total, limit, offset, memos}. No body, just bodyPreview/bodyLength (and commentCount); ?full=1 for real bodies. q is full-text over title+body+comments (words are AND, 3 chars minimum, punctuation is literal) and adds snippet + matchedIn (memo|comment) to each hit. Other filters: status (comma list) · author (contains) · user (exact) · limit (≤200, default 50) · offset. Needs a token — reads are not open (any user token, or the admin token)",
-    query: "?status=open,doing&q=&author=&user=&limit=50&offset=0&full=0" },
+    summary: "Summary index of the board, newest first — {count, total, limit, offset, memos}. No body, just bodyPreview/bodyLength (and commentCount, score, voters, myScore); ?full=1 for real bodies. q is full-text over title+body+comments (words are AND, 3 chars minimum, punctuation is literal) and adds snippet + matchedIn (memo|comment) to each hit. sort=score ranks by importance instead of newest first. Other filters: status (comma list) · author (contains) · user (exact) · limit (≤200, default 50) · offset. Needs a token — reads are not open (any user token, or the admin token)",
+    query: "?status=open,doing&q=&author=&user=&sort=new&limit=50&offset=0&full=0" },
   { method: "POST", path: "/api/memos", topic: "memo",
     summary: "Post to the board. Needs a user token; `user` is stamped from it",
     body: "{body, title?, status?, author?}" },
   { method: "GET", path: "/api/memos/:memoId", topic: "memo",
-    summary: "One post by id with its comments — {memo, comments}, or 404 memo_not_found" },
+    summary: "One post by id with its comments and its scores — {memo, comments, scores}, or 404 memo_not_found" },
   { method: "PATCH", path: "/api/memos/:memoId", topic: "memo",
     summary: "Partial update — omitted fields keep their value; `updatedBy` is stamped from your token. Needs a user token",
     body: "{title?, body?, status?, author?}" },
@@ -49,6 +49,14 @@ export const AGENT_ROUTES = Object.freeze([
 
   { method: "GET", path: "/api/memos/:memoId/history", topic: "memo",
     summary: "Who changed this post and when — {count, total, memoId, history}. Facts only: at, actor, action, changed field names; never the overwritten or deleted text (that is admin-only, GET /api/admin/audit). Answers even after the post is deleted. Needs a token" },
+
+  { method: "GET", path: "/api/memos/:memoId/score", topic: "memo",
+    summary: "How important people found this post — {memoId, score, voters, myScore, scores}. score is the sum, voters is how many people, scores names them. Needs a token" },
+  { method: "PUT", path: "/api/memos/:memoId/score", topic: "memo",
+    summary: "Set YOUR score for a post, 1..5 — one score per person per post, so this replaces your own value and never touches anyone else's. Idempotent: sending it twice does not double anything. Needs a user token",
+    body: "{value}" },
+  { method: "DELETE", path: "/api/memos/:memoId/score", topic: "memo",
+    summary: "Withdraw your own score — {deleted, memoId, score, voters, myScore, scores}. Needs a user token" },
 
   { method: "GET", path: "/api/memos/:memoId/comments", topic: "memo",
     summary: "The thread under one post, oldest first — {count, memoId, comments}. GET /api/memos/:memoId already carries them; this is for re-reading one thread. Needs a token, like every read" },

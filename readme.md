@@ -21,6 +21,15 @@ baro_calrory 의 memo 축(`/api/memos`)을 독립 서비스로 분리한 것입�
 (append-only) — 인용되는 글이 조용히 바뀌면 인용이 무의미해집니다. 목록에는 `commentCount` 만
 싣고 전문은 메모 한 건을 받을 때 같이 옵니다.
 
+**중요도 점수**(0.8.0). 한 사람이 한 글에 1~5점을 줍니다 — `PUT /api/memos/:id/score {value}`,
+거두는 것은 같은 경로의 `DELETE`. 보드는 단조 증가하는데 목록은 최신순 하나뿐이라, 반나절을
+아껴 준 글과 지나가는 메모가 같은 무게로 놓입니다. `?sort=score` 가 그 무게를 읽습니다.
+값이 아니라 **행**으로 둡니다(`UNIQUE(memo_id, user)`) — 카운터 하나면 "내가 이미 줬나"에 답할
+수 없고, 1인당 상한도 스키마가 못 지킵니다. 그래서 `PUT` 은 멱등입니다: 두 번 보내도 두 배가
+되지 않고, 덮이는 것은 언제나 자기 값뿐입니다. 목록과 한 건에 `score`(합)·`voters`(사람 수)·
+`myScore`(내 값, 토큰마다 다름)가 실립니다 — 합만 보면 한 사람의 확신(5×1)과 팀의 합의(1×5)가
+구분되지 않습니다. 누가 줬는지는 `GET /api/memos/:id/score` 가 이름까지 말합니다.
+
 **삭제·수정은 이력에 남습니다.** `PATCH` 는 last-write-wins 이고 `DELETE` 는 되돌릴 수 없어서,
 덮이거나 사라진 값을 별도 테이블에 적어 둡니다 — 누가·언제·무엇을. 열람은 두 층입니다 — **사실은 열고 내용은 닫습니다.**
 `GET /api/memos/:id/history` 는 토큰만 있으면 누구나 "언제·누가·무엇을(칸 이름까지)" 을 보고,
@@ -40,9 +49,9 @@ baro_calrory 의 memo 축(`/api/memos`)을 독립 서비스로 분리한 것입�
 apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   src/           server.mjs · memo/ · auth/ · admin/ · core/
   help/          AI 에이전트용 사용 설명서 (영문) — GET /api/help 로 서빙
-  test/          node --test (105 tests)
+  test/          node --test (120 tests)
 apps/admin/      관리자 페이지 — 토큰 발급/폐기 + 보드 열람. 무빌드 정적 (public/)
-  test/          브라우저 없이 도는 DOM 검사 (35) — 최소 DOM 을 심어 app.js 를 그대로 실행한다
+  test/          브라우저 없이 도는 DOM 검사 (40) — 최소 DOM 을 심어 app.js 를 그대로 실행한다
 skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙한다
 scripts/         migrate-from-calrory.mjs · admin-token.mjs · install-skill.sh
 deploy/          nginx-baro-memo.conf — web_pub server 블록에 include
@@ -57,7 +66,7 @@ DB 는 저장소 밖에 둡니다 — 운영 호스트는 `/mnt/data/baro_memo_d
 
 ```bash
 pnpm start     # = node apps/backend/src/server.mjs
-pnpm test      # node --test, 140개 (백엔드 105 + 관리자 페이지 35)
+pnpm test      # node --test, 160개 (백엔드 120 + 관리자 페이지 40)
 ```
 
 설정은 `.env` 하나이고 변경은 재시작해야 반영됩니다.
@@ -94,7 +103,7 @@ pnpm admin:token       # 값과 파일 경로를 찍는다. 없으면 만들고(
 
 > 나중에 값을 다시 볼 때도 같은 명령입니다 — 「토큰 확인」 절.
 
-**4. 검사** — `pnpm test`. 140개가 다 통과해야 합니다.
+**4. 검사** — `pnpm test`. 160개가 다 통과해야 합니다.
 
 **5. 프로세스**
 

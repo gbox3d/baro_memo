@@ -108,8 +108,10 @@ td .st { font-size: 12px; }
 .cmt { padding: 8px 0; border-bottom: 1px solid var(--line); }
 .cmt:last-child { border-bottom: 0; }
 .cmt-head { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
-#memo-history { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 8px; color: var(--muted); font-size: 12px; }
-.hist { display: flex; gap: 8px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+/* 중요도와 이력. 둘 다 hidden 으로 여닫으므로 여기서 display 를 주지 않는다(위와 같은 함정). */
+#memo-scores, #memo-history { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 8px; color: var(--muted); font-size: 12px; }
+.hist, .score { display: flex; gap: 8px; padding: 2px 0; font-variant-numeric: tabular-nums; }
+.score b { color: var(--fg); font-weight: 600; }
 .cmt-body { margin: 4px 0 0; white-space: pre-wrap; word-break: break-word; font: 13px/1.6 ui-monospace, monospace; }
 /* 안내 메시지 팝업. 본문 팝업과 같은 함정을 피한다 — display 는 [open] 에만. */
 #invite-dialog {
