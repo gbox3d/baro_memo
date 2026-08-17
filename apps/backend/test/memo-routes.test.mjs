@@ -107,11 +107,27 @@ test("폐기된 토큰은 그 순간부터 401", async () => {
 test("user 는 토큰에서 찍힌다 — 본문의 author 와는 별개다", async () => {
   const { handle, tokens } = rig(["kim"]);
   const made = await handle("POST", "/api/memos",
-    { body: "밤에 실패", author: "claude/night" }, { "x-memo-token": tokens.kim });
+    { body: "fails at night", author: "claude/night" }, { "x-memo-token": tokens.kim });
   assert.equal(made.status, 201);
   assert.equal(made.json.memo.user, "kim");
   assert.equal(made.json.memo.updatedBy, "kim");
   assert.equal(made.json.memo.author, "claude/night");
+});
+
+// 규칙이 저장소에서만 서면 부르는 쪽은 500 을 본다 — "서버가 고장났다"로 읽히고, 고칠 사람이
+// 자기라는 것을 모른다. 400 과 코드가 그 귀속을 정한다.
+test("한글 글은 400 english_only 로 돌아온다 — 500 이면 고칠 사람을 잘못 가리킨다", async () => {
+  const { handle, tokens } = rig(["kim"]);
+  const auth = { "x-memo-token": tokens.kim };
+  const res = await handle("POST", "/api/memos",
+    { title: "업로드 실패", body: "토큰이 만료되면 조용히 실패한다." }, auth);
+  assert.equal(res.status, 400);
+  assert.equal(res.json.code, "english_only");
+  assert.match(res.json.error, /backticks/, "거절이 대안을 가리켜야 다시 쓸 수 있다");
+
+  const ok = await handle("POST", "/api/memos",
+    { title: "Upload fails silently", body: "The token expired; see `토큰이 만료되었습니다` in the log." }, auth);
+  assert.equal(ok.status, 201, "백틱에 담긴 원문 인용까지 막으면 식별자를 번역하게 된다");
 });
 
 test("본문으로 user 를 보내면 400 user_readonly — 조용한 무시는 사칭의 반쪽이다", async () => {
@@ -140,15 +156,15 @@ test("Authorization: Bearer 로도 통과한다", async () => {
 test("접수 → 조회 → 부분 갱신 → 삭제 왕복", async () => {
   const { handle, tokens } = rig(["kim"]);
   const auth = { "x-memo-token": tokens.kim };
-  const made = await handle("POST", "/api/memos", { title: "야간 판독", body: "3번 면 실패" }, auth);
+  const made = await handle("POST", "/api/memos", { title: "night read", body: "face 3 fails" }, auth);
   const { id } = made.json.memo;
 
   const got = await handle("GET", `/api/memos/${id}`);
-  assert.equal(got.json.memo.title, "야간 판독");
+  assert.equal(got.json.memo.title, "night read");
 
   const patched = await handle("PATCH", `/api/memos/${id}`, { status: "done" }, auth);
   assert.equal(patched.json.memo.status, "done");
-  assert.equal(patched.json.memo.body, "3번 면 실패"); // 안 보낸 필드는 그대로
+  assert.equal(patched.json.memo.body, "face 3 fails"); // 안 보낸 필드는 그대로
 
   const gone = await handle("DELETE", `/api/memos/${id}`, {}, auth);
   assert.equal(gone.json.deleted, true);
@@ -330,12 +346,12 @@ test("한 건은 문서다 — 메모와 댓글을 함께 준다", async () => {
   const auth = { "x-memo-token": tokens.kim };
   const { json: made } = await handle("POST", "/api/memos", { title: "t", body: "b" }, auth);
 
-  await handle("POST", `/api/memos/${made.memo.id}/comments`, { body: "먼저" }, auth);
-  await handle("POST", `/api/memos/${made.memo.id}/comments`, { body: "나중", author: "claude/x" }, auth);
+  await handle("POST", `/api/memos/${made.memo.id}/comments`, { body: "first" }, auth);
+  await handle("POST", `/api/memos/${made.memo.id}/comments`, { body: "second", author: "claude/x" }, auth);
 
   const res = await handle("GET", `/api/memos/${made.memo.id}`);
   assert.equal(res.status, 200);
-  assert.deepEqual(res.json.comments.map((c) => c.body), ["먼저", "나중"]);
+  assert.deepEqual(res.json.comments.map((c) => c.body), ["first", "second"]);
   assert.equal(res.json.memo.commentCount, 2, "개수는 목록에서도 같은 이름으로 보인다");
 });
 
@@ -354,7 +370,7 @@ test("댓글도 읽기에 토큰이 필요하고, 쓰기는 토큰에서 user �
   assert.equal(noToken.status, 401);
   assert.equal(noToken.json.code, "memo_token_invalid");
 
-  const posted = await handle("POST", path, { body: "달았다", author: "claude/x" }, auth);
+  const posted = await handle("POST", path, { body: "added", author: "claude/x" }, auth);
   assert.equal(posted.status, 201);
   assert.equal(posted.json.comment.user, "kim");
   assert.equal(posted.json.comment.author, "claude/x");
@@ -383,7 +399,7 @@ test("댓글 삭제는 경로가 맞아야 한다 — 남의 메모 밑으로는
   const auth = { "x-memo-token": tokens.kim };
   const { json: a } = await handle("POST", "/api/memos", { body: "a" }, auth);
   const { json: b } = await handle("POST", "/api/memos", { body: "b" }, auth);
-  const { json: made } = await handle("POST", `/api/memos/${a.memo.id}/comments`, { body: "지울 것" }, auth);
+  const { json: made } = await handle("POST", `/api/memos/${a.memo.id}/comments`, { body: "to delete" }, auth);
 
   const wrongPath = await handle("DELETE", `/api/memos/${b.memo.id}/comments/${made.comment.id}`, {}, auth);
   assert.equal(wrongPath.status, 404);
@@ -416,7 +432,7 @@ test("목록은 메모마다 commentCount 를 싣는다 — 있는지 보려고 
   const auth = { "x-memo-token": tokens.kim };
   const { json: a } = await handle("POST", "/api/memos", { body: "a" }, auth);
   await handle("POST", "/api/memos", { body: "b" }, auth);
-  await handle("POST", `/api/memos/${a.memo.id}/comments`, { body: "하나" }, auth);
+  await handle("POST", `/api/memos/${a.memo.id}/comments`, { body: "one" }, auth);
 
   const res = await list("");
   const counts = Object.fromEntries(res.json.memos.map((m) => [m.id, m.commentCount]));
@@ -433,9 +449,9 @@ test("이력은 언제·누가·무엇을 말하고, 내용은 말하지 않는�
   const { handle, tokens } = rig(["kim", "lee"]);
   const mine = { "x-memo-token": tokens.kim };
   const theirs = { "x-memo-token": tokens.lee };
-  const { json: made } = await handle("POST", "/api/memos", { title: "내 글", body: "원래 본문" }, mine);
+  const { json: made } = await handle("POST", "/api/memos", { title: "my post", body: "original body" }, mine);
 
-  await handle("PATCH", `/api/memos/${made.memo.id}`, { body: "남이 덮은 본문", status: "doing" }, theirs);
+  await handle("PATCH", `/api/memos/${made.memo.id}`, { body: "body someone else overwrote", status: "doing" }, theirs);
 
   const res = await handle("GET", `/api/memos/${made.memo.id}/history`, {}, mine);
   assert.equal(res.status, 200);
@@ -450,15 +466,15 @@ test("이력은 언제·누가·무엇을 말하고, 내용은 말하지 않는�
   assert.equal(entry.before, undefined);
   assert.equal(entry.after, undefined);
   assert.equal(entry.summary, undefined);
-  assert.equal(JSON.stringify(res.json).includes("원래 본문"), false);
-  assert.equal(JSON.stringify(res.json).includes("남이 덮은 본문"), false);
+  assert.equal(JSON.stringify(res.json).includes("original body"), false);
+  assert.equal(JSON.stringify(res.json).includes("body someone else overwrote"), false);
 });
 
 test("메모가 지워져도 이력은 답한다 — 그게 이 축이 있는 이유다", async () => {
   const { handle, tokens } = rig(["kim", "lee"]);
   const mine = { "x-memo-token": tokens.kim };
-  const { json: made } = await handle("POST", "/api/memos", { title: "곧 사라질 글", body: "b" }, mine);
-  await handle("POST", `/api/memos/${made.memo.id}/comments`, { body: "댓글" }, mine);
+  const { json: made } = await handle("POST", "/api/memos", { title: "about to vanish", body: "b" }, mine);
+  await handle("POST", `/api/memos/${made.memo.id}/comments`, { body: "a comment" }, mine);
   await handle("DELETE", `/api/memos/${made.memo.id}`, {}, { "x-memo-token": tokens.lee });
 
   assert.equal((await handle("GET", `/api/memos/${made.memo.id}`, {}, mine)).status, 404, "메모는 없다");
@@ -470,7 +486,7 @@ test("메모가 지워져도 이력은 답한다 — 그게 이 축이 있는 �
   assert.equal(entry.actor, "lee");
   assert.equal(entry.memoOwner, "kim");
   assert.equal(entry.commentsRemoved, 1);
-  assert.equal(JSON.stringify(res.json).includes("곧 사라질 글"), false, "지워진 제목도 내용이다");
+  assert.equal(JSON.stringify(res.json).includes("about to vanish"), false, "지워진 제목도 내용이다");
 });
 
 test("이력에도 토큰이 필요하고, 쓰기 경로는 없다", async () => {

@@ -18,17 +18,17 @@ function rig() {
 
 test("수정은 바뀐 칸만 남긴다 — 덮인 값과 새 값을 함께", () => {
   const { memos, audit } = rig();
-  const memo = memos.create({ title: "before", body: "원래 본문", status: "open" }, "kim");
+  const memo = memos.create({ title: "before", body: "original body", status: "open" }, "kim");
 
-  memos.update(memo.id, { body: "새 본문", status: "doing" }, "lee");
+  memos.update(memo.id, { body: "new body", status: "doing" }, "lee");
 
   const { total, entries } = audit.list({ memoId: memo.id });
   assert.equal(total, 1);
   const [e] = entries;
   assert.equal(e.action, "memo_update");
   assert.equal(e.actor, "lee", "고친 사람은 만든 사람이 아니라 토큰의 주인이다");
-  assert.deepEqual(e.before, { body: "원래 본문", status: "open" });
-  assert.deepEqual(e.after, { body: "새 본문", status: "doing" });
+  assert.deepEqual(e.before, { body: "original body", status: "open" });
+  assert.deepEqual(e.after, { body: "new body", status: "doing" });
   assert.equal(e.before.title, undefined, "안 바뀐 칸은 싣지 않는다");
   assert.match(e.summary, /body/);
 });
@@ -42,17 +42,17 @@ test("같은 값으로 덮은 수정은 이력이 아니다", () => {
 
 test("삭제는 사라지는 것을 전부 남긴다 — 본문과 딸린 댓글까지", () => {
   const { memos, comments, audit } = rig();
-  const memo = memos.create({ title: "지울 것", body: "본문 전문" }, "kim");
-  comments.add(memo.id, { body: "댓글에 있던 답", author: "claude/x" }, "lee");
+  const memo = memos.create({ title: "to delete", body: "the whole body" }, "kim");
+  comments.add(memo.id, { body: "the answer that was in the comment", author: "claude/x" }, "lee");
 
   memos.remove(memo.id, "kim");
 
   const [e] = audit.list().entries;
   assert.equal(e.action, "memo_delete");
   assert.equal(e.actor, "kim");
-  assert.equal(e.before.memo.body, "본문 전문");
+  assert.equal(e.before.memo.body, "the whole body");
   // cascade 로 같이 사라지는 댓글을 빼면 "그 스레드에 있던 답" 이 추적 밖으로 나간다.
-  assert.deepEqual(e.before.comments.map((c) => c.body), ["댓글에 있던 답"]);
+  assert.deepEqual(e.before.comments.map((c) => c.body), ["the answer that was in the comment"]);
   assert.match(e.summary, /1 comment/);
 });
 
@@ -69,21 +69,21 @@ test("메모가 지워져도 그 삭제 기록은 남는다 — 외래키를 걸
 test("댓글 삭제도 남는다 — 남의 정정을 지운 것이 추적된다", () => {
   const { memos, comments, audit } = rig();
   const memo = memos.create({ title: "t", body: "b" }, "kim");
-  const c = comments.add(memo.id, { body: "정정: 원인은 다른 것이었다" }, "lee");
+  const c = comments.add(memo.id, { body: "correction: the cause was something else" }, "lee");
 
   comments.remove(c.id, "kim");
 
   const [e] = audit.list({ action: "comment_delete" }).entries;
   assert.equal(e.actor, "kim", "지운 사람");
   assert.equal(e.before.user, "lee", "쓴 사람");
-  assert.equal(e.before.body, "정정: 원인은 다른 것이었다");
+  assert.equal(e.before.body, "correction: the cause was something else");
   assert.equal(e.commentId, c.id);
   assert.equal(e.memoId, memo.id);
 });
 
 test("지운 내용은 일반 검색으로 되살아나지 않는다", () => {
   const { memos, audit } = rig();
-  const memo = memos.create({ title: "t", body: "zzsecret 이라는 낱말" }, "kim");
+  const memo = memos.create({ title: "t", body: "the word zzsecret" }, "kim");
   assert.equal(memos.list({ q: "zzsecret" }).total, 1);
 
   memos.remove(memo.id, "kim");

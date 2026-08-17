@@ -117,7 +117,7 @@ test("이력은 관리자 토큰으로만 열린다", async () => {
 
 test("이력에 삭제된 메모의 전문이 남는다", async () => {
   const { handle, admin, memoStore } = rig();
-  const memo = memoStore.create({ title: "지울 것", body: "사라질 본문" }, "kim");
+  const memo = memoStore.create({ title: "to delete", body: "body that will vanish" }, "kim");
   memoStore.remove(memo.id, "kim");
 
   const res = await handle("GET", "/api/admin/audit", {}, admin);
@@ -125,7 +125,7 @@ test("이력에 삭제된 메모의 전문이 남는다", async () => {
   const [entry] = res.json.entries;
   assert.equal(entry.action, "memo_delete");
   assert.equal(entry.actor, "kim");
-  assert.equal(entry.before.memo.body, "사라질 본문");
+  assert.equal(entry.before.memo.body, "body that will vanish");
 });
 
 test("이력 쿼리도 오타를 거절한다 — 조용한 무시는 없다", async () => {

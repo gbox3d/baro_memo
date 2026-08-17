@@ -19,14 +19,14 @@ test("댓글은 시간순이고 user 는 인자에서만 온다", () => {
   const { memos, comments } = rig();
   const memo = memos.create({ title: "t", body: "b" }, "kim");
 
-  const first = comments.add(memo.id, { body: "먼저", author: "claude/a", user: "사칭" }, "kim");
-  const second = comments.add(memo.id, { body: "나중", author: "claude/b" }, "lee");
+  const first = comments.add(memo.id, { body: "first", author: "claude/a", user: "impostor" }, "kim");
+  const second = comments.add(memo.id, { body: "second", author: "claude/b" }, "lee");
 
   assert.equal(first.user, "kim");
   assert.equal(second.user, "lee", "본문의 user 는 무시된다 — 스탬프가 정본이다");
   assert.equal(first.memoId, memo.id);
   // 대화는 위에서 아래로 읽힌다. 목록이 최신순인 것과 반대인 이유가 그것이다.
-  assert.deepEqual(comments.listFor(memo.id).map((c) => c.body), ["먼저", "나중"]);
+  assert.deepEqual(comments.listFor(memo.id).map((c) => c.body), ["first", "second"]);
   assert.equal(comments.countFor(memo.id), 2);
 });
 
@@ -69,7 +69,7 @@ test("댓글은 검색에 걸리고, 어느 쪽에서 걸렸는지 말해 준다
 test("지운 댓글은 색인에서도 사라진다", () => {
   const { memos, comments } = rig();
   const post = memos.create({ title: "t", body: "b" }, "kim");
-  const c = comments.add(post.id, { body: "SQLITE_BUSY 를 만났다" }, "lee");
+  const c = comments.add(post.id, { body: "hit SQLITE_BUSY" }, "lee");
 
   assert.equal(memos.list({ q: "SQLITE_BUSY" }).total, 1);
   assert.equal(comments.remove(c.id), true);
@@ -80,7 +80,7 @@ test("지운 댓글은 색인에서도 사라진다", () => {
 test("메모를 지우면 그 댓글도 같이 간다", () => {
   const { memos, comments } = rig();
   const post = memos.create({ title: "t", body: "b" }, "kim");
-  comments.add(post.id, { body: "orphan candidate — cascade 로 같이 지워져야 한다" }, "lee");
+  comments.add(post.id, { body: "orphan candidate — cascade should take it" }, "lee");
 
   memos.remove(post.id);
   assert.equal(comments.listFor(post.id).length, 0);
@@ -92,8 +92,8 @@ test("목록과 한 건 모두 commentCount 를 싣는다", () => {
   const { memos, comments } = rig();
   const a = memos.create({ title: "a", body: "a" }, "kim");
   memos.create({ title: "b", body: "b" }, "kim");
-  comments.add(a.id, { body: "하나" }, "lee");
-  comments.add(a.id, { body: "둘" }, "lee");
+  comments.add(a.id, { body: "one" }, "lee");
+  comments.add(a.id, { body: "two" }, "lee");
 
   const byId = Object.fromEntries(memos.list().memos.map((m) => [m.id, m.commentCount]));
   assert.equal(byId[a.id], 2);
@@ -108,7 +108,7 @@ test("이미 쌓인 DB 에 댓글 색인을 얹으면 기존 댓글이 채워진
   const memos = new MemoStore(db);
   const comments = new CommentStore(db);
   const post = memos.create({ title: "t", body: "b" }, "kim");
-  comments.add(post.id, { body: "backfill 대상 문장" }, "lee");
+  comments.add(post.id, { body: "backfill target line" }, "lee");
 
   db.exec("DROP TABLE comment_fts");
   db.exec("DROP TRIGGER IF EXISTS comment_fts_ai; DROP TRIGGER IF EXISTS comment_fts_ad; DROP TRIGGER IF EXISTS comment_fts_au");

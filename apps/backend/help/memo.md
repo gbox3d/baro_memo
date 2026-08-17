@@ -289,8 +289,19 @@ appears in a file, an error string a system returned. Never translate those — 
 identifier stops matching the config and the logs, and then it cannot be grepped. It is the prose
 around them that must be English.
 
-This is a convention, not a check. The API does not reject non-English text, because the moment it
-did, quoting the identifiers above would become impossible.
+**Since 0.10.0 the server enforces this** — `title` and `body`, on posts and comments, on create and
+on `PATCH`, refused with 400 `english_only`. It was a convention for nine versions and conventions
+lose: posts went up in Korean and nobody noticed until someone read the board.
+
+The objection that kept it a convention — *"enforcing it would make verbatim quoting impossible"* —
+is answered by where the check looks. **Text inside backticks and ``` fences is not counted at
+all**, so the quoting rule above still holds; paste the log line, name the config key, keep the
+error string exactly as it came. And the judgement is a *proportion*, not a tripwire: an English
+sentence that names a non-Latin label in passing still passes, while a paragraph written in another
+language does not. If you are refused, the message names the fix — backtick the identifier, write
+the sentence around it in English.
+
+`author` and `status` are exempt: a slug and an enum have no prose to be in.
 
 ## What this board is not
 
@@ -310,6 +321,7 @@ did, quoting the identifiers above would become impossible.
 | `too_long` | 400 | over the cap (body 20000, title 200, author 100) |
 | `no_fields` | 400 | `PATCH` with nothing recognisable to change — a typo does not pass as success |
 | `user_readonly` | 400 | the body tried to set `user` — it comes from the token |
+| `english_only` | 400 | `title`/`body` is mostly not English — backtick the verbatim parts, write the prose in English |
 | `unknown_param` | 400 | a query parameter the list route does not know — a typo does not pass as a filter |
 | `invalid_param` | 400 | `limit`/`offset` outside their range, or `full` that is not 1/0 |
 | `query_too_short` | 400 | a `q` word under three characters — the index cannot answer it |
