@@ -1,51 +1,71 @@
 // 진짜 서버를 띄우는 왕복 검사 — 이 파일이 이 저장소의 정직성이다.
 //
-// server.mjs 의 스트리밍 예외(청크 경로가 본문을 라우팅 전에 가로챈다)는 라우터 단위 검사가
-// 못 본다. 여기서는 실제 HTTP 로: 순서 없는 청크 → 끊긴 청크(content-length 보다 짧은 몸통)
-// → 같은 구간 재전송 → finalize → 해시 검증까지 전부 소켓을 지나간다.
+// 스트리밍 예외(청크 경로가 본문을 라우팅 전에 가로챈다)는 라우터 단위 검사가 못 본다.
+// 여기서는 실제 HTTP 로: 순서 없는 청크 → 끊긴 청크(content-length 보다 짧은 몸통) → 같은
+// 구간 재전송 → finalize → 해시 검증까지 전부 소켓을 지나간다.
 //
-// 보드는 가짜 하나를 띄운다 — whoami 만 답하면 된다. env 를 먼저 심고 server.mjs 를 동적
-// import 하므로 이 파일은 **혼자서 한 번만** 서버를 든다.
+// **0.11.0 부터 이 검사가 드는 것은 보드 서버다.** 저장소가 그 프로세스에 마운트로 들어왔고,
+// 정체성도 같은 프로세스의 토큰 표에서 온다 — 그래서 예전에 whoami 만 답하던 가짜 보드가
+// 사라졌다. 대신 진짜 토큰을 발급해 쓴다: 검사가 지나는 인증 경로가 운영과 같아졌다는 뜻이다.
+// 외부 경로도 운영 그대로 `/api/files/...` 를 친다 — nginx 가 `/files/api/` 를 여기로 보낸다.
 import assert from "node:assert/strict";
 import test from "node:test";
 import http from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const root = await mkdtemp(join(tmpdir(), "baro-files-e2e-"));
+import { openDb } from "../../backend/src/core/db.mjs";
+import { TokenStore } from "../../backend/src/auth/token-store.mjs";
 
-// 가짜 보드 — 토큰 표 하나로 whoami 를 답한다.
-const TOKENS = {
-  tok_kim: { user: "kim", admin: false },
-  tok_lee: { user: "lee", admin: false },
-  tok_adm: { user: null, admin: true },
-};
-const memo = http.createServer((req, res) => {
-  const token = req.headers["x-memo-token"] || "";
-  const known = TOKENS[token];
-  res.writeHead(known ? 200 : 401, { "content-type": "application/json" });
-  res.end(JSON.stringify(known || { code: "memo_token_invalid" }));
-});
-await new Promise((r) => memo.listen(0, "127.0.0.1", r));
+const work = await mkdtemp(join(tmpdir(), "baro-memo-e2e-"));
+const root = join(work, "files");
+const adminTokenFile = join(work, "admin.token");
+const T = { adm: "adm_e2e_value" };
+await writeFile(adminTokenFile, `${T.adm}\n`, { mode: 0o600 });
+
+// 토큰을 **서버보다 먼저** 심는다 — 같은 DB 파일을 서버가 열고, 판정이 그 표에서 나온다.
+const seed = openDb(join(work, "memo.db"));
+const seedTokens = new TokenStore(seed);
+T.kim = seedTokens.issue({ user: "kim" }).token;
+T.lee = seedTokens.issue({ user: "lee" }).token;
+seed.close();
 
 process.env.NODE_ENV = "test";
+process.env.MEMO_DB = join(work, "memo.db");
 process.env.FILES_ROOT = root;
-process.env.MEMO_API = `http://127.0.0.1:${memo.address().port}/api`;
-const { server } = await import("../src/server.mjs");
+process.env.ADMIN_TOKEN_FILE = adminTokenFile;
+const { server } = await import("../../backend/src/server.mjs");
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${server.address().port}`;
 
 test.after(async () => {
   server.close();
-  memo.close();
-  await rm(root, { recursive: true, force: true });
+  await rm(work, { recursive: true, force: true });
+});
+
+// 마운트가 보드와 같은 프로세스에 있다는 사실 자체를 못 박는다 — 포트 하나, 접두사로 갈린다.
+test("한 프로세스가 둘을 든다 — 보드와 저장소가 같은 포트에서 각자 답한다", async () => {
+  const board = await fetch(`${base}/api/health`, { headers: { "x-memo-token": T.kim } });
+  const boardJson = await board.json();
+  assert.equal(boardJson.ok, true);
+  assert.equal(boardJson.files, "mounted", "보드 건강이 저장소의 생사도 말해야 한다");
+
+  const store = await (await fetch(`${base}/api/files/health`)).json();
+  assert.equal(store.version, boardJson.version, "버전이 둘이면 '무엇이 배포됐나'가 두 질문이 된다");
+
+  // **이 검사가 운영 볼륨을 열지 않았다는 증거.** 서버는 repoRoot 의 .env 도 읽는다 —
+  // process.loadEnvFile 이 기존 process.env 를 덮지 않기 때문에 위에서 심은 임시 경로가 이기지만,
+  // 그 동작에 조용히 기대면 어느 판에서 뒤집혔을 때 검사가 운영 저장소에 파일을 쓴다.
+  // 갓 만든 임시 뿌리는 반드시 비어 있다 — 여기서 0이 아니면 남의 디스크를 연 것이다.
+  assert.equal(store.store.artifacts, 0, "빈 임시 뿌리가 아니다 — 운영 볼륨을 열었을 수 있다");
+  assert.equal(boardJson.board.total, 0, "빈 임시 DB 가 아니다 — 운영 보드를 열었을 수 있다");
 });
 
 const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 
-async function api(method, path, { body, token = "tok_kim", headers = {} } = {}) {
+async function api(method, path, { body, token = T.kim, headers = {} } = {}) {
   const res = await fetch(`${base}${path}`, {
     method,
     headers: {
@@ -59,14 +79,14 @@ async function api(method, path, { body, token = "tok_kim", headers = {} } = {})
 }
 
 const putChunk = (id, buf, start, extra = {}) =>
-  api("PUT", `/api/uploads/${id}/chunks`, {
+  api("PUT", `/api/files/uploads/${id}/chunks`, {
     body: buf,
     headers: { "chunk-start": String(start), "content-type": "application/octet-stream", ...extra },
   });
 
 test("왕복: 순서 없는 청크 → 재전송 → finalize → 바이트가 store 에 그대로", async () => {
   const body = randomBytes(300 * 1024); // 300KB, 3청크
-  const { json: made } = await api("POST", "/api/uploads", {
+  const { json: made } = await api("POST", "/api/files/uploads", {
     body: { name: "sim_v1.zip", size: body.length, sha256: sha(body) },
   });
   const id = made.upload.id;
@@ -80,7 +100,7 @@ test("왕복: 순서 없는 청크 → 재전송 → finalize → 바이트가 s
   assert.equal(again.json.complete, true);
   assert.deepEqual(again.json.received, [[0, body.length]], "재전송이 구간을 늘리지 않는다");
 
-  const done = await api("POST", `/api/uploads/${id}/finalize`);
+  const done = await api("POST", `/api/files/uploads/${id}/finalize`);
   assert.equal(done.status, 201);
   assert.equal(done.json.artifact.sha256, sha(body));
   assert.deepEqual(await readFile(join(root, "store", sha(body))), body, "디스크의 바이트가 원본 그대로다");
@@ -88,7 +108,7 @@ test("왕복: 순서 없는 청크 → 재전송 → finalize → 바이트가 s
 
 test("끊긴 청크는 장부에 없다 — content-length 보다 짧은 몸통", async () => {
   const body = randomBytes(64 * 1024);
-  const { json: made } = await api("POST", "/api/uploads", {
+  const { json: made } = await api("POST", "/api/files/uploads", {
     body: { name: "trunc.bin", size: body.length, sha256: sha(body) },
   });
   const id = made.upload.id;
@@ -98,9 +118,9 @@ test("끊긴 청크는 장부에 없다 — content-length 보다 짧은 몸통"
   await new Promise((resolve) => {
     const net = server.address();
     const sock = http.request({
-      host: "127.0.0.1", port: net.port, method: "PUT", path: `/api/uploads/${id}/chunks`,
+      host: "127.0.0.1", port: net.port, method: "PUT", path: `/api/files/uploads/${id}/chunks`,
       headers: {
-        "x-memo-token": "tok_kim", "chunk-start": "0",
+        "x-memo-token": T.kim, "chunk-start": "0",
         "content-type": "application/octet-stream", "content-length": String(body.length),
       },
     });
@@ -109,30 +129,30 @@ test("끊긴 청크는 장부에 없다 — content-length 보다 짧은 몸통"
     sock.write(body.subarray(0, 1000), () => sock.destroy());
   });
 
-  const inv = await api("GET", `/api/uploads/${id}`);
+  const inv = await api("GET", `/api/files/uploads/${id}`);
   assert.deepEqual(inv.json.upload.received, [], "반쯤 온 청크가 받은 척 기록되면 finalize 가 해시에서야 터진다");
 
   // 같은 구간을 온전히 다시 보내면 복구된다.
   assert.equal((await putChunk(id, body, 0)).json.complete, true);
-  assert.equal((await api("POST", `/api/uploads/${id}/finalize`)).status, 201);
+  assert.equal((await api("POST", `/api/files/uploads/${id}/finalize`)).status, 201);
 });
 
 test("청크 문턱: 관리자 금지·경계 검사·411·크기 상한", async () => {
   const body = randomBytes(1024);
-  const { json: made } = await api("POST", "/api/uploads", {
+  const { json: made } = await api("POST", "/api/files/uploads", {
     body: { name: "guard.bin", size: body.length, sha256: sha(body) },
   });
   const id = made.upload.id;
 
-  assert.equal((await putChunk(id, body, 0, { "x-memo-token": "tok_adm" })).status, 403);
+  assert.equal((await putChunk(id, body, 0, { "x-memo-token": T.adm })).status, 403);
   assert.equal((await putChunk(id, body, 0, { "x-memo-token": "nope" })).status, 401);
   assert.equal((await putChunk(id, body, 512)).json.code, "chunk_out_of_bounds", "끝을 넘는 청크");
   assert.equal((await putChunk(id, body, -1)).json.code, "invalid_chunk_start");
-  assert.equal((await api("POST", `/api/uploads/${id}/chunks`, { body })).status, 405, "청크는 PUT 이다");
+  assert.equal((await api("POST", `/api/files/uploads/${id}/chunks`, { body })).status, 405, "청크는 PUT 이다");
 
   // 남의 세션에는 청크를 꽂을 수 없다 — 서버 발급 id 에 소유자가 묶여 있고, 남의 것은
   // 존재조차 보이지 않는다(404). 이 검사가 없으면 교차 주입 차단은 이름뿐이다.
-  const spoof = await putChunk(id, body, 0, { "x-memo-token": "tok_lee" });
+  const spoof = await putChunk(id, body, 0, { "x-memo-token": T.lee });
   assert.equal(spoof.status, 404);
   assert.equal(spoof.json.code, "upload_not_found");
   const owner = await putChunk(id, body, 0);
@@ -143,7 +163,7 @@ test("411 과 청크 상한 — 제목만 있던 두 문턱을 날소켓으로 �
   const { connect } = await import("node:net");
   const net = server.address();
   const body = randomBytes(1024);
-  const { json: made } = await api("POST", "/api/uploads", {
+  const { json: made } = await api("POST", "/api/files/uploads", {
     body: { name: "caps.bin", size: 200 * 1024 * 1024, sha256: sha(body) },
   });
   const id = made.upload.id;
@@ -151,7 +171,7 @@ test("411 과 청크 상한 — 제목만 있던 두 문턱을 날소켓으로 �
   // Node 클라이언트는 transfer-encoding 헤더에 제 처리를 얹는다 — 날소켓으로 원문 그대로 보낸다.
   const rawProbe = (headerLines) => new Promise((resolve, reject) => {
     const sock = connect(net.port, "127.0.0.1", () => {
-      sock.write(`PUT /api/uploads/${id}/chunks HTTP/1.1\r\nhost: t\r\nx-memo-token: tok_kim\r\nchunk-start: 0\r\n${headerLines}\r\n`);
+      sock.write(`PUT /api/files/uploads/${id}/chunks HTTP/1.1\r\nhost: t\r\nx-memo-token: ${T.kim}\r\nchunk-start: 0\r\n${headerLines}\r\n`);
     });
     let raw = "";
     sock.on("data", (c) => {
@@ -174,7 +194,7 @@ test("411 과 청크 상한 — 제목만 있던 두 문턱을 날소켓으로 �
 
 test("흐르는 청크가 있는 동안 finalize 는 기다리라고 답한다 — 해시 중 오염의 그 창", async () => {
   const body = randomBytes(64 * 1024);
-  const { json: made } = await api("POST", "/api/uploads", {
+  const { json: made } = await api("POST", "/api/files/uploads", {
     body: { name: "busy.bin", size: body.length, sha256: sha(body) },
   });
   const id = made.upload.id;
@@ -187,9 +207,9 @@ test("흐르는 청크가 있는 동안 finalize 는 기다리라고 답한다 �
 
   // 이제 같은 구간의 재전송을 **열어만 두고**(헤더 + 앞부분만 보내고 멈춤) finalize 를 부른다.
   const slow = http.request({
-    host: "127.0.0.1", port: net.port, method: "PUT", path: `/api/uploads/${id}/chunks`,
+    host: "127.0.0.1", port: net.port, method: "PUT", path: `/api/files/uploads/${id}/chunks`,
     headers: {
-      "x-memo-token": "tok_kim", "chunk-start": "0",
+      "x-memo-token": T.kim, "chunk-start": "0",
       "content-type": "application/octet-stream", "content-length": String(body.length),
     },
   });
@@ -197,47 +217,47 @@ test("흐르는 청크가 있는 동안 finalize 는 기다리라고 답한다 �
   slow.write(body.subarray(0, 1024));
   await new Promise((r) => setTimeout(r, 50)); // 서버가 스트림을 열 시간
 
-  const busy = await api("POST", `/api/uploads/${id}/finalize`);
+  const busy = await api("POST", `/api/files/uploads/${id}/finalize`);
   assert.equal(busy.status, 409);
   assert.equal(busy.json.code, "upload_busy", "흐르는 쓰기를 무시하고 해시하면 발행본이 오염된다");
 
   slow.end(body.subarray(1024)); // 청크를 마저 보낸다
   await slowDone;
-  const done = await api("POST", `/api/uploads/${id}/finalize`);
+  const done = await api("POST", `/api/files/uploads/${id}/finalize`);
   assert.equal(done.status, 201, "청크가 끝나면 finalize 가 된다 — 세션은 busy 로 죽지 않았다");
 });
 
 test("sha 불일치 → 세션 유지 → 재전송 → 성공, 그리고 dedupe", async () => {
   const body = randomBytes(2048);
-  const { json: made } = await api("POST", "/api/uploads", {
+  const { json: made } = await api("POST", "/api/files/uploads", {
     body: { name: "fix.bin", size: body.length, sha256: sha(body) },
   });
   const id = made.upload.id;
 
   await putChunk(id, randomBytes(2048), 0); // 틀린 바이트로 채운다
-  const bad = await api("POST", `/api/uploads/${id}/finalize`);
+  const bad = await api("POST", `/api/files/uploads/${id}/finalize`);
   assert.equal(bad.status, 409);
   assert.equal(bad.json.code, "sha256_mismatch");
 
   await putChunk(id, body, 0); // 바로잡는다
-  assert.equal((await api("POST", `/api/uploads/${id}/finalize`)).status, 201);
+  assert.equal((await api("POST", `/api/files/uploads/${id}/finalize`)).status, 201);
 
   // 같은 바이트를 다른 사람이 또 — 전량 올린 뒤에 기존 완성본을 받는다.
-  const { json: re } = await api("POST", "/api/uploads", {
+  const { json: re } = await api("POST", "/api/files/uploads", {
     body: { name: "other-name.bin", size: body.length, sha256: sha(body) },
   });
   await putChunk(re.upload.id, body, 0);
-  const dedup = await api("POST", `/api/uploads/${re.upload.id}/finalize`);
+  const dedup = await api("POST", `/api/files/uploads/${re.upload.id}/finalize`);
   assert.equal(dedup.json.deduplicated, true);
   assert.equal(dedup.json.artifact.name, "fix.bin", "정체는 첫 발행이다");
 });
 
 test("도움말·건강 — 열려 있고, 큰 본문은 JSON 경로에서 413 이다", async () => {
-  const health = await api("GET", "/api/health", { token: null });
+  const health = await api("GET", "/api/files/health", { token: null });
   assert.equal(health.status, 200);
   assert.ok(health.json.store.freeBytes > 0);
 
-  const helpRes = await fetch(`${base}/api/help`);
+  const helpRes = await fetch(`${base}/api/files/help`);
   assert.match(await helpRes.text(), /chunk/i);
 
   // fetch 는 본문을 다 못 보낸 채 이른 응답을 받으면 넘어지므로, 날 http 클라이언트로 본다 —
@@ -245,8 +265,8 @@ test("도움말·건강 — 열려 있고, 큰 본문은 JSON 경로에서 413 �
   const big = await new Promise((resolve, reject) => {
     const net = server.address();
     const reqBig = http.request({
-      host: "127.0.0.1", port: net.port, method: "POST", path: "/api/uploads",
-      headers: { "x-memo-token": "tok_kim", "content-type": "application/json" },
+      host: "127.0.0.1", port: net.port, method: "POST", path: "/api/files/uploads",
+      headers: { "x-memo-token": T.kim, "content-type": "application/json" },
     }, (res) => {
       let raw = "";
       res.on("data", (c) => { raw += c; });
@@ -260,7 +280,7 @@ test("도움말·건강 — 열려 있고, 큰 본문은 JSON 경로에서 413 �
 });
 
 test("리퍼 배선 — 기동 즉시 1회, 주기 반복, 거절은 삼킨다", async () => {
-  const { wireReaper } = await import("../src/server.mjs");
+  const { wireReaper } = await import("../src/mount.mjs");
   let calls = 0;
   let rejectOnce = true;
   const stub = {
@@ -287,7 +307,7 @@ test("서빙되는 업로드 스크립트에는 **받아 간 주소**가 박힌�
   const fetchAs = (host) => new Promise((resolve, reject) => {
     const net = server.address();
     const r = http.request({
-      host: "127.0.0.1", port: net.port, method: "GET", path: "/api/upload.sh",
+      host: "127.0.0.1", port: net.port, method: "GET", path: "/api/files/upload.sh",
       headers: { host, "x-forwarded-prefix": "/files" },
     }, (res) => {
       let raw = ""; res.on("data", (c) => { raw += c; });

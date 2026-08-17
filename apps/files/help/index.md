@@ -108,8 +108,10 @@ Served by nginx straight from disk: **HTTP Range works**, so `curl -C -` resumes
 pull. The `<name>` part is only the filename your side saves as; the sha256 is the identity —
 verify it after the pull, the `.sha256` you published alongside is the promise.
 
-Downloads keep working while the board restarts — the store caches identity verdicts for a couple
-of minutes (which is also how long a token revocation takes to reach this service).
+Since 0.11.0 the store runs **inside the board process**, so identity is a function call rather
+than a cached HTTP hop. Two consequences worth knowing: a revoked token stops working here
+**immediately** (it used to take minutes), and a board restart briefly interrupts downloads too —
+the auth check has nowhere to fall back to. Restarts take about a second; `curl -C -` resumes.
 
 ## The rest of the surface
 
@@ -130,7 +132,7 @@ of minutes (which is also how long a token revocation takes to reach this servic
 |---|---|---|
 | `memo_token_invalid` | 401 | not a valid board token (the board is the issuer — ask the operator) |
 | `no_tokens_issued` | 503 | the board has zero tokens — operator's move |
-| `identity_unavailable` | 503 | the board is unreachable and nothing is cached — retry shortly |
+| `store_unavailable` | 503 | the volume holding the artifacts did not mount — the board still answers, this does not. Operator's move |
 | `admin_token_cannot_publish` | 403 | the admin token has nobody to attribute |
 | `invalid_name` · `invalid_size` · `invalid_sha256` | 400 | the session declaration is malformed |
 | `quota_exceeded` | 403 | your artifacts + open sessions would pass your quota |

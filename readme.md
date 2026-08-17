@@ -43,13 +43,13 @@ baro_calrory 의 memo 축(`/api/memos`)을 독립 서비스로 분리한 것입�
 저장소에서, 짐작도 못 할 제목으로 쓰였을 가능성이 높습니다 — 찾는 수단은 분류가 아니라 검색
 이어야 합니다. 낱말 여럿은 AND, 문장부호는 연산자가 아니라 글자, 낱말당 3글자 이상.
 
-**릴리스 아티팩트**(`apps/files`, 0.1.1). 수 GB 짜리 빌드 zip 을 연구실 사이로 나릅니다 —
+**릴리스 아티팩트**(`apps/files`). 수 GB 짜리 빌드 zip 을 연구실 사이로 나릅니다 —
 청크·재개 업로드, nginx 가 디스크에서 직접 주는 Range 다운로드. **파일은 그냥 파일입니다**:
 DB 에는 장부(어느 구간을 받았나·완성본 해시)만 있고 바이트는 `FILES_ROOT/store/<sha256>` 에
 평범한 파일로 앉습니다(그래서 nginx 가 sendfile 로 바로 서빙합니다). 인증은 보드 토큰 그대로
-(`GET /api/auth/whoami`), 발행은 사람 토큰만. **한 저장소, 두 프로세스**입니다 — 보드 서버는
-본문을 통째로 메모리에 올린 뒤 라우팅하는 구조라 수 GB 스트리밍을 그 프로세스에 심을 수
-없습니다. 사용법 정본은 `GET /files/api/help`.
+(판정은 보드와 같은 함수), 발행은 사람 토큰만. **한 저장소, 한 프로세스**입니다 — 0.11.0 에서
+보드 프로세스의 마운트(`/api/files`)로 들어왔습니다. 수 GB 스트리밍이 가능한 이유는 청크 경로가
+본문을 **읽기 전에** 가로채기 때문입니다. 밖에서 보이는 주소는 그대로 `/files/...` 입니다. 사용법 정본은 `GET /files/api/help`.
 
 ## 구조 (pnpm 모노레포)
 
@@ -58,11 +58,12 @@ apps/backend/    보드 백엔드 — 의존성 0 (node:sqlite, Node 24+), :3001
   src/           server.mjs · memo/ · auth/ · admin/ · core/
   help/          AI 에이전트용 사용 설명서 (영문) — GET /api/help 로 서빙
   test/          node --test (125 tests)
-apps/files/      아티팩트 저장소 — 의존성 0, :3002. 청크 업로드·finalize·장부
+apps/files/      아티팩트 저장소 — 의존성 0. 보드 프로세스에 마운트된다(/api/files)
   src/files/       store.mjs (세션·구간·완성본 장부 + 바이트 수명) · routes.mjs · schema.mjs
-  src/core/        identity.mjs (보드 whoami + 캐시) · db.mjs · http.mjs
+  src/mount.mjs    보드 서버가 얹는 마운트(청크 스트리밍 예외가 여기 있다)
+  src/core/        db.mjs · http.mjs
   help/index.md    에이전트용 영문 설명서 — GET /files/api/help
-  test/            node --test 38개 (E2E 가 실제 소켓으로 끊긴 청크까지 돌린다)
+  test/            node --test (E2E 가 진짜 보드 서버를 들고 실제 소켓으로 끊긴 청크까지 돌린다)
 apps/admin/      관리자 페이지 — 토큰 발급/폐기 + 보드 열람. 무빌드 정적 (public/)
   test/          브라우저 없이 도는 DOM 검사 (40) — 최소 DOM 을 심어 app.js 를 그대로 실행한다
 skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙한다
@@ -117,12 +118,12 @@ pnpm admin:token       # 값과 파일 경로를 찍는다. 없으면 만들고(
 
 > 나중에 값을 다시 볼 때도 같은 명령입니다 — 「토큰 확인」 절.
 
-**4. 검사** — `pnpm test`. 203개가 다 통과해야 합니다.
+**4. 검사** — `pnpm test`. 216개가 다 통과해야 합니다.
 
 **5. 프로세스**
 
 ```bash
-pm2 start ecosystem.config.cjs && pm2 save     # baro-memo(:3001) 와 baro-files(:3002) 둘
+pm2 start ecosystem.config.cjs && pm2 save     # baro-memo 하나 (:3001 이 보드와 저장소 둘 다)
 ```
 
 > 확인: 기동 로그 한 줄이 DB 경로와 **관리자 토큰의 출처 경로**까지 찍습니다.

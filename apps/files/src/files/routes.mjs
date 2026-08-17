@@ -24,7 +24,10 @@ function refusal(verdict) {
   const messages = {
     memo_token_invalid: "The store needs a board token — header x-memo-token or Authorization: Bearer. Ask the operator for one.",
     no_tokens_issued: "No tokens have been issued on the board — ask the operator.",
-    identity_unavailable: "The identity service (baro_memo) is unreachable and no cached verdict exists — try again shortly.",
+    // 0.11.0 부터 정체성은 같은 프로세스의 함수라 "닿지 않음" 이 없다. 표를 남겨 두는 이유는
+    // 판정이 다시 프로세스 밖으로 나갈 수 있어서다 — 그때 이 문장이 없으면 코드가 맨 "Refused."
+    // 를 답하고, 부르는 쪽은 재시도하면 되는 일인지조차 모른다.
+    identity_unavailable: "The identity source is unreachable and no cached verdict exists — try again shortly.",
   };
   return json(verdict.status, {
     error: messages[verdict.code] || "Refused.",
