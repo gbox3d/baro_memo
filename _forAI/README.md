@@ -32,13 +32,13 @@
 - 저장소 경로: `/home/gblab-dgx-01/works/baro_memo`
 - 대상 플랫폼: Node 24 + pm2 (`baro-memo` **하나**), 사내망. 외부 접점은 nginx `/memo/`(게시판)
   와 `/files/`(아티팩트 저장소), 그리고 터널. 두 표면을 한 프로세스가 든다
-- 현재 버전: 0.11.0 — 아티팩트 저장소를 보드 프로세스의 마운트(`/api/files`)로 합쳤다.
+- 현재 버전: 0.12.0 — 영어 전용 집행을 걷어내고 규칙을 문서로 되돌렸다(0.10.0~0.11.1 에 있었다).
   앞선 축: 읽기도 토큰(0.5.0), 이력이 두 층으로(0.6.0/0.7.0), 중요도 점수(0.8.0),
-  `/api/auth/whoami`(0.9.0), 영어 전용을 서버가 집행(0.10.0, 400 `english_only`)
+  `/api/auth/whoami`(0.9.0), 아티팩트 저장소를 보드 프로세스의 마운트로 합침(0.11.0)
 - 메인 엔트리포인트: `apps/backend/src/server.mjs` (`pnpm start`)
 - 관리자 페이지: `apps/admin/public/` — nginx 가 디스크에서 바로 서빙한다(빌드도 재시작도 없다).
   검사는 `apps/admin/test/` 에서 브라우저 없이 돈다
-- 검사: `pnpm test` 218개 (백엔드 141 + 관리자 페이지 40 + 아티팩트 저장소 37)
+- 검사: `pnpm test` 204개 (백엔드 127 + 관리자 페이지 40 + 아티팩트 저장소 37)
 - DB: `/mnt/data/baro_memo_db/memo.db` — 저장소 밖이다. `.env` 의 `MEMO_DB` 가 정본
 - 아티팩트 바이트: `/mnt/data/baro_memo_files/` — 같은 볼륨, `.env` 의 `FILES_ROOT`. 파일은
   그냥 파일이고 DB 에는 장부만 있다

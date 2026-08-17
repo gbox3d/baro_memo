@@ -2,13 +2,7 @@
 //
 // 따로 두면 갈라진다. 댓글 본문만 30000자를 받아 주는 순간 "왜 이건 되고 저건 안 되나"가
 // 생기고, 그 답은 코드 두 곳을 읽어야 나온다.
-import { nonEnglishRefusal } from "./language.mjs";
-
 export const LIMITS = Object.freeze({ title: 200, body: 20000, author: 100, status: 100 });
-
-// 사람이 읽는 산문만 영어 규칙을 받는다. `author` 는 슬러그이고 `status` 는 열거값이라 언어가
-// 없다 — 거기까지 걸면 규칙이 아니라 방해가 된다.
-const PROSE_FIELDS = new Set(["title", "body"]);
 
 export function fail(code, message) {
   return Object.assign(new Error(message), { code });
@@ -21,12 +15,11 @@ export function text(value, field) {
   if (typeof value !== "string") throw fail("invalid_field", `${field} must be a string.`);
   const s = value.trim();
   if (s.length > LIMITS[field]) throw fail("too_long", `${field} exceeds the cap (${LIMITS[field]} chars).`);
-  // 여기에 두는 이유: 제목·본문이 들어오는 문이 이 함수 하나다. 라우트마다 부르게 하면 다음에
-  // 생기는 라우트가 빠뜨리고, 그 사실은 아무도 모른 채 한 글이 올라간 뒤에 드러난다.
-  if (PROSE_FIELDS.has(field)) {
-    const refusal = nonEnglishRefusal(s, field);
-    if (refusal) throw fail("english_only", refusal);
-  }
+  // **언어는 여기서 판정하지 않는다.** 0.10.0~0.11.1 에 영어 전용을 이 자리에서 집행했다가
+  // 0.12.0 에 걷어냈다 — 쓰기 경로마다 검사를 지나야 하고, 정당한 인용을 거절할 위험을 지며,
+  // 정작 비켜 가는 모양(문턱 아래 섞기·로마자)은 못 잡았다. 규칙은 남았고 자리가 바뀌었다:
+  // help 와 스킬이 말하고, 지키는 것은 쓰는 쪽이다. 되살리고 싶어지면 그때 다시 재는 것은
+  // "무엇을 막았나" 가 아니라 "무엇을 잘못 막았나" 다.
   return s;
 }
 

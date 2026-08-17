@@ -114,22 +114,6 @@ test("user 는 토큰에서 찍힌다 — 본문의 author 와는 별개다", as
   assert.equal(made.json.memo.author, "claude/night");
 });
 
-// 규칙이 저장소에서만 서면 부르는 쪽은 500 을 본다 — "서버가 고장났다"로 읽히고, 고칠 사람이
-// 자기라는 것을 모른다. 400 과 코드가 그 귀속을 정한다.
-test("한글 글은 400 english_only 로 돌아온다 — 500 이면 고칠 사람을 잘못 가리킨다", async () => {
-  const { handle, tokens } = rig(["kim"]);
-  const auth = { "x-memo-token": tokens.kim };
-  const res = await handle("POST", "/api/memos",
-    { title: "업로드 실패", body: "토큰이 만료되면 조용히 실패한다." }, auth);
-  assert.equal(res.status, 400);
-  assert.equal(res.json.code, "english_only");
-  assert.match(res.json.error, /backticks/, "거절이 대안을 가리켜야 다시 쓸 수 있다");
-
-  const ok = await handle("POST", "/api/memos",
-    { title: "Upload fails silently", body: "The token expired; see `토큰이 만료되었습니다` in the log." }, auth);
-  assert.equal(ok.status, 201, "백틱에 담긴 원문 인용까지 막으면 식별자를 번역하게 된다");
-});
-
 test("본문으로 user 를 보내면 400 user_readonly — 조용한 무시는 사칭의 반쪽이다", async () => {
   const { handle, tokens } = rig(["kim"]);
   const res = await handle("POST", "/api/memos", { body: "x", user: "lee" }, { "x-memo-token": tokens.kim });

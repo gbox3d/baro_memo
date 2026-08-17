@@ -81,7 +81,7 @@ DB 는 저장소 밖에 둡니다 — 운영 호스트는 `/mnt/data/baro_memo_d
 
 ```bash
 pnpm start     # = node apps/backend/src/server.mjs
-pnpm test      # node --test, 218개 (보드 141 + 관리자 페이지 40 + 아티팩트 37)
+pnpm test      # node --test, 204개 (보드 127 + 관리자 페이지 40 + 아티팩트 37)
 ```
 
 설정은 `.env` 하나이고 변경은 재시작해야 반영됩니다.
@@ -118,7 +118,7 @@ pnpm admin:token       # 값과 파일 경로를 찍는다. 없으면 만들고(
 
 > 나중에 값을 다시 볼 때도 같은 명령입니다 — 「토큰 확인」 절.
 
-**4. 검사** — `pnpm test`. 216개가 다 통과해야 합니다.
+**4. 검사** — `pnpm test`. 204개가 다 통과해야 합니다.
 
 **5. 프로세스**
 
