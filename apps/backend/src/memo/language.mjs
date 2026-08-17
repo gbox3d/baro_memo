@@ -19,13 +19,14 @@
 //   - minLetters 2: 한 글자는 기호일 수 있다(단위, 로고). 두 글자부터 단어로 본다.
 export const ENGLISH_RULE = Object.freeze({ minLetters: 2, maxRatio: 0.15 });
 
-// 펜스가 닫히지 않았으면 그 뒤 전부를 코드로 본다 — 관대한 쪽이다. 이것을 우회로 쓸 수는 있지만
-// (펜스 열고 한글을 쏟기), 이 검사는 보안 통제가 아니라 실수를 잡는 난간이다. 실수는 백틱을
-// 안 쓴 쪽이지 연 채로 두는 쪽이 아니다.
+// **닫힌 것만 코드로 본다.** 처음에는 안 닫힌 펜스도 끝까지 코드로 봤는데(관대한 쪽), 그게
+// 가장 그럴듯한 우회이자 가장 흔한 실수였다: 로그를 붙여 넣다 ``` 를 안 닫으면 그 뒤 글 전체가
+// 검사 밖으로 나간다. 안 닫힌 펜스는 보드에서도 깨져 보이므로, 그 안을 산문으로 세어 거절하면
+// 두 문제를 한 메시지가 고친다. 인라인 백틱은 원래 짝이 맞아야만 지워진다.
 function stripCode(s) {
   return s
-    .replace(/```[\s\S]*?(?:```|$)/g, " ")
-    .replace(/~~~[\s\S]*?(?:~~~|$)/g, " ")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/~~~[\s\S]*?~~~/g, " ")
     .replace(/`[^`]*`/g, " ");
 }
 
@@ -42,7 +43,13 @@ function count(s, re) {
 // 이모지·화살표·따옴표는 글자가 아니다(\p{L} 밖) — 세지 않는다. 이 문서들이 그런 기호를 많이
 // 쓰기 때문에, 비ASCII 를 세는 순간 영어 글이 거절당한다.
 export function scriptMix(value) {
-  const prose = stripCode(String(value ?? ""));
+  const raw = String(value ?? "");
+  let prose = stripCode(raw);
+  // **전부가 코드면 그건 코드가 아니라 변장이다.** 본문을 통째로 백틱 한 쌍에 넣으면 산문이
+  // 0글자가 되어 어떤 언어든 지나갔다. 코드만 있고 그것을 설명하는 문장이 없는 글은 애초에
+  // 이 보드가 받으려는 물건이 아니므로(그건 로그 미러링이다), 그럴 때는 날것을 두고 센다.
+  if (count(prose, LETTER) === 0 && count(raw, LETTER) > 0) prose = raw;
+
   const letters = count(prose, LETTER);
   const english = count(prose, LATIN) + count(prose, GREEK);
   const other = letters - english;

@@ -62,6 +62,26 @@ test("펜스 안의 로그 붙여넣기도 세지 않는다", () => {
   assert.equal(text(body, "body"), body);
 });
 
+// --- 코드 표시를 우회로 쓰는 두 모양 ------------------------------------------------------
+//
+// 둘 다 **악의가 아니라 실수**로 먼저 온다: 로그를 붙여 넣다 펜스를 안 닫고, 본문을 통째로
+// 인용부호에 넣는다. 처음 구현은 둘 다 통과시켰다 — 관대한 쪽을 골랐더니 가장 흔한 실수가
+// 그대로 구멍이었다.
+
+test("안 닫힌 펜스는 코드가 아니다 — 그 뒤 전부가 검사 밖으로 나가던 자리", () => {
+  const body = "Log follows:\n```\n토큰이 만료되면 업로드가 조용히 실패한다. 원인은 캐시였다.";
+  assert.equal(refusalOf(() => text(body, "body"))?.code, "english_only");
+  // 닫으면 같은 내용이 지나간다 — 거절이 가리키는 고침이 실제로 통한다는 뜻이다.
+  assert.doesNotThrow(() => text(`${body}\n\`\`\`\nFixed by widening the TTL.`, "body"));
+});
+
+test("본문을 통째로 백틱에 넣는 것은 코드가 아니라 변장이다", () => {
+  const body = "`토큰이 만료되면 업로드가 조용히 실패한다. 원인은 캐시였다.`";
+  assert.equal(refusalOf(() => text(body, "body"))?.code, "english_only");
+  // 다만 영어 로그만 있는 글은 그대로 지나간다 — 이 규칙은 언어를 보지 코드를 벌하지 않는다.
+  assert.doesNotThrow(() => text("```\nERROR: chunk_truncated at offset 1090519040\n```", "body"));
+});
+
 test("영어 문장 안의 한두 마디 언급은 통과한다 — 비율로 보는 이유", () => {
   const body = "The button labeled 저장 does nothing when the session has already been finalized.";
   assert.equal(text(body, "body"), body);
