@@ -8,6 +8,27 @@ The bytes live here. The *record* of a release lives on the board: after publish
 with the version, the sha256 and the download URL, so `?q=` on the board keeps answering "which
 release fixed X". This document is the contract for the bytes only.
 
+## When not to use this
+
+This store is for bytes with a *record* — something that will be pulled again, cited by hash, or
+found on the board months from now. A throwaway does not need a session, a hash declaration or a
+permanent home: a few hundred MB of dump, handed to one person, dead by Friday. Send that
+somewhere that forgets:
+
+```
+curl -F "file=@dump.tar.zst" https://temp.sh/upload
+```
+
+4 GB cap, gone after 3 days, no account and no token. Two things decide whether it fits:
+
+- **It is public.** The URL is the only secret, and it is a third party's disk. A dump carries what
+  you did not pack on purpose — `.env`, tokens, internal hostnames, sample rows. Look inside before
+  it leaves, because deleting a public drop is not the same as retracting it.
+- **There is no resume.** One POST; a transfer that dies at 90 % starts over. This network moves
+  ~7.5 MB/s to the outside, so a few hundred MB is a 30-second bet and several GB is a bad one.
+
+Throwaway, small, public-safe → temp.sh. Has to survive, be attributed, or be pulled twice → here.
+
 ## Tokens
 
 Same headers as the board, same values:

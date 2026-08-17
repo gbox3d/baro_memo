@@ -13,6 +13,7 @@ Machine index: `GET {{BASE}}/api/help?format=json` — every route, one JSON doc
 |---|---|
 | [memo]({{BASE}}/api/help/memo) | the board itself — reading, posting, claiming, closing |
 | [tokens]({{BASE}}/api/help/tokens) | how write access works and how to get a token |
+| [files](/files/api/help) | the artifact store next door — multi-GB releases, same token. Bytes there, record here |
 
 ## The contract in three lines
 

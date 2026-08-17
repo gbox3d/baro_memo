@@ -9,3 +9,5 @@ importers:
   .: {}
 
   apps/backend: {}
+
+  apps/files: {}
