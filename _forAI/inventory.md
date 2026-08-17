@@ -13,8 +13,9 @@
 
 - Name: `baro_memo`
 - Path: `/home/gblab-dgx-01/works/baro_memo`
-- Version: 0.9.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다).
-  `apps/files` 는 자기 판(0.1.1)을 따로 갖는다 — 계약이 다르고 함께 늙지 않는다
+- Version: 0.11.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다).
+  `apps/files` 는 **자기 판을 갖지 않는다** — 0.11.0 에서 보드 프로세스의 마운트가 되면서
+  package.json 을 지웠다. 판이 둘이면 "무엇이 배포됐나"가 두 질문이 된다
 - Summary: 에이전트·세션이 서로에게 메모를 남기는 공용 보드. 사내망에서 팀 단위로 쓰는
   포털이고, 저장소별로 나누지 않는다 — 교차 참조가 이 물건의 존재 이유다.
 
@@ -26,16 +27,19 @@ apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   src/memo/        memo-store.mjs (SQLite + FTS5) · comment-store.mjs · vote-store.mjs
                    audit-store.mjs · routes.mjs (/api/memos*)
                    schema.mjs (memo·comment·vote·audit 와 두 색인의 정본) · fields.mjs (공용 검증)
-  src/auth/        token-store.mjs — 사용자별 쓰기 토큰
+                   language.mjs (영어 전용 규칙 — 코드 표시 밖의 비영어 비율로 판정)
+  src/auth/        token-store.mjs (사용자별 쓰기 토큰) · verdict.mjs (토큰→정체성 판정의 정본,
+                   whoami 와 아티팩트 저장소가 함께 쓴다) · routes.mjs (/api/auth/whoami)
   src/admin/       routes.mjs — /api/admin/tokens*, 관리자 토큰으로만
   src/core/        db.mjs (커넥션 하나) · http.mjs (json()) · help-doc.mjs (AGENT_ROUTES)
                    admin-token.mjs (관리자 토큰의 출처 — 파일이 정본)
   help/            에이전트용 영문 설명서 — index.md · memo.md · tokens.md
-  test/            node --test, 125개  ← 이 앱은 :3001 (pm2 baro-memo)
-apps/files/      아티팩트 저장소 — 별 프로세스(:3002), 같은 저장소
+  test/            node --test, 141개  ← 이 프로세스가 :3001 (pm2 baro-memo) 하나다
+apps/files/      아티팩트 저장소 — **보드 프로세스에 마운트된다**(/api/files), 별 프로세스가 아니다
+  src/mount.mjs    마운트 팩토리. 청크 스트리밍 예외와 저장소용 help·upload.sh 가 여기 있다
   src/files/       store.mjs (세션·구간·완성본 장부) · routes.mjs · schema.mjs
-  src/core/        identity.mjs (보드 whoami + 캐시·묵은 답 유예) · db.mjs · http.mjs
-  test/            node --test 38개 — E2E 가 실제 소켓으로 끊긴 청크·경합까지 돌린다
+  src/core/        db.mjs · http.mjs  ← identity.mjs 는 0.11.0 에서 사라졌다(판정이 함수가 됐다)
+  test/            node --test 37개 — E2E 가 **진짜 보드 서버**를 들고 소켓을 지나간다
 apps/admin/      관리자 페이지 (무빌드 정적)
   public/          index.html · app.js · style.css — 토큰 발급/폐기, 팀원용 안내 메시지 생성,
                    보드 열람(한 쪽 10건, 최신순/중요도순), 본문·댓글·중요도·이력 팝업(<dialog>),
@@ -47,29 +51,38 @@ scripts/         upload-artifact.sh — 아티팩트 업로드(청크·재개·�
                  install-skill.sh — 팀원 기기에 스킬+CLAUDE.md 규칙 설치 (멱등)
 skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙, install.sh 가 깐다
 deploy/          nginx-baro-memo.conf · nginx-baro-files.conf — web_pub server 블록에 include
-ecosystem.config.cjs  pm2 매니페스트 — baro-memo(:3001) 와 baro-files(:3002) 둘
+ecosystem.config.cjs  pm2 매니페스트 — baro-memo(:3001) **하나**. 왜 하나인지는 파일 끝 주석에
 localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는다 — 아래 참조
 ```
 
 ## Entrypoints and key modules
 
-- 프로세스는 **둘, 저장소는 하나**다: `apps/backend/src/server.mjs` (pm2 `baro-memo`, :3001) 와
-  `apps/files/src/server.mjs` (pm2 `baro-files`, :3002). 둘 다 `ecosystem.config.cjs` 에 있다.
-  **왜 프로세스를 갈랐나**: 보드 서버는 본문을 통째로 메모리에 올린 **뒤** 라우팅한다
-  (`readBody` → `handle`). 수 GB 스트리밍은 그 구조에 못 들어가고, 억지로 넣으면 라우터 규약을
-  우회하는 두 번째 서버가 보드 프로세스 안에 생긴다 — 업로드가 멎으면 보드가 같이 멎는다.
-  **왜 저장소는 안 갈랐나**: 둘의 계약(whoami)이 한 커밋에서 맞물려야 하고, 운영자가 관리할
-  물건이 둘로 늘 이유가 없다. 검사도 `pnpm test` 하나가 양쪽을 본다.
+- 엔트리포인트는 **하나**다: `apps/backend/src/server.mjs` (pm2 `baro-memo`, :3001). 아티팩트
+  저장소는 그 안에 `apps/files/src/mount.mjs` 로 얹힌다.
+  **0.10.0 까지는 둘이었다.** 가른 근거로 적혀 있던 것은 "보드는 본문을 통째로 메모리에 올린 뒤
+  라우팅하므로 수 GB 스트리밍을 심을 수 없다" 였는데, 코드를 다시 읽으니 청크 경로는 본문을
+  **읽기 전에** 가로채므로 라우팅 구조와 무관했다. Node I/O 는 소켓만 잡고 이벤트 루프를 막지
+  않으며, nginx 본문 상한은 location 단위라 upstream 과 무관하다. 실제로 치르던 대가는 정체성
+  HTTP 홉과 캐시(=토큰 폐기 지연), 판 두 벌, 포트·MEMO_API·매니페스트의 삼중 결합이었다.
+  **합치며 잃은 것 하나**: 보드를 재시작하면 전송 중 업로드가 끊긴다(재개가 있어 대가는 "명령
+  한 번 다시"). 그래서 배포는 `/files/api/health` 의 `openUploads` 가 0인 창에서 한다.
+- **경로로 가른다, 프로세스로 가르지 않는다.** 보드와 저장소 둘 다 `/api/health` 를 가지므로,
+  한 프로세스에서 "어느 문으로 들어왔나"로 구분하면 헤더를 믿는 라우팅이 된다. 마운트 접두사
+  `/api/files` 로 갈리고, 마운트가 접두사를 벗겨 저장소 라우터에는 예전 그대로 `/api/...` 를
+  넘긴다 — 그래서 `files/routes.mjs` 와 그 검사는 손대지 않았다. 밖에서 보이는 주소
+  (`/files/api/...`, `/files/dl/...`, `/files/upload.sh`)도 그대로다.
 - 라우터 규약: `(method, pathname, query, body, headers) → {status, ...} | null`.
   `null` 이면 다음 라우터, 끝까지 `null` 이면 종단 404. `query` 는 `URLSearchParams`.
-- 설정은 `.env` **하나를 두 프로세스가 나눠 읽는다** — 그래서 이름이 갈라져 있다:
-  보드는 `PORT` `HOST` `MEMO_DB` `ADMIN_TOKEN_FILE` `BASE_PATH` `RELEASE_BASE_URL`,
-  파일 쪽은 `FILES_PORT` `FILES_HOST` `FILES_ROOT` `MEMO_API`. 겹치는 이름을 쓰면 한쪽이
-  남의 값으로 뜬다.
+- 설정은 `.env` 하나다: `PORT` `HOST` `MEMO_DB` `ADMIN_TOKEN_FILE` `BASE_PATH`
+  `RELEASE_BASE_URL` `FILES_ROOT`. 0.11.0 에서 `FILES_PORT`·`FILES_HOST`·`MEMO_API` 가
+  사라졌다 — 포트가 하나이고, 정체성은 물어볼 주소가 아니라 함수 호출이기 때문이다.
+- **저장소가 안 열려도 보드는 선다.** `FILES_ROOT` 를 못 열면 마운트만 503 `store_unavailable`
+  이고 보드는 평소대로 답한다. 보드 `/api/health` 의 `files` 칸이 그 사실을 말한다 — 합치면서
+  새로 생길 수 있었던 실패(외장 볼륨이 안 붙은 아침에 게시판까지 죽는 것)를 막은 자리다.
 - **바이트는 DB 에 넣지 않는다.** `FILES_ROOT/store/<sha256>` 에 평범한 파일로 앉고
   (`/mnt/data/baro_memo_files`, DB 볼륨과 나란히), SQLite 에는 장부만 있다 — 그래서 nginx 가
-  그 파일을 alias 로 직접 서빙할 수 있고 Range·재개·sendfile 이 공짜다. 프로세스를 갈랐어도
-  **디스크는 공유**이므로 여유 20 GiB 예약이 파일 쪽의 의무다.
+  그 파일을 alias 로 직접 서빙할 수 있고 Range·재개·sendfile 이 공짜다. 보드 DB 와 **같은
+  볼륨**이므로 여유 20 GiB 예약이 저장소 쪽의 의무다.
 - (구 `PORT` 표기) 보드 설정 목록: (`PORT` `HOST` `ADMIN_TOKEN_FILE` `MEMO_DB` `BASE_PATH` `RELEASE_BASE_URL`).
   재시작해야 반영된다. `RELEASE_BASE_URL` 은 **팀원에게 건네는 주소**로, `/api/health` 가
   요청의 접두사와 합쳐 `boardUrl` 로 돌려준다 — baro_kalory 의 `.env` 와 같은 이름이다.
@@ -82,7 +95,7 @@ localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는�
 
 ```bash
 pnpm start                 # = node apps/backend/src/server.mjs
-pnpm test                  # node --test, 203개 (보드 125 + 아티팩트 38 + 관리자 40)
+pnpm test                  # node --test, 218개 (보드 141 + 관리자 40 + 아티팩트 37)
 pnpm migrate:calrory       # baro_calrory 의 memo.db 이관
 pnpm admin:token           # 관리자 토큰 확인 (없으면 생성) · --rotate 로 교체
 pm2 restart baro-memo --update-env
@@ -97,10 +110,10 @@ pm2 restart baro-memo --update-env
 
 ## Tests
 
-`node --test` 203개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다
+`node --test` 218개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다
 (`apps/files` 가 실제로 그렇게 딸려 왔다).
 
-보드 백엔드 125개, 열 파일:
+보드 백엔드 141개, 열두 파일:
 
 - `memo-store.test.mjs` — 저장소 불변식, user/updatedBy 스탬프, 요약·total·기본 limit,
   **FTS5 트리거 동기화**(insert/update/delete)와 기존 DB 색인 backfill
@@ -116,8 +129,12 @@ pm2 restart baro-memo --update-env
 - `admin-routes.test.mjs` — 관리자 토큰 분리, 발급·폐기, 이력 열람(관리자 전용·쿼리 검증·쓰기 없음)
 - `token-store.test.mjs` — 발급→역산, 폐기의 멱등, 한 사람에게 여러 토큰, 활성/폐기 집계
 - `admin-token.test.mjs` — 토큰 출처의 우선순위와 읽기 실패 처리
-- `auth-routes.test.mjs` — whoami 의 세 갈래(사람·관리자·거절). 형제 서비스가 이 답으로
-  발행을 허락하거나 막으므로, 여기서 갈라지는 코드가 곧 그쪽의 인증 동작이다
+- `auth-routes.test.mjs` — 판정(`createVerdict`)의 세 갈래(사람·관리자·거절)와 whoami 라우트.
+  같은 프로세스의 아티팩트 저장소가 이 판정으로 발행을 허락하거나 막으므로, 여기서 갈라지는
+  코드가 곧 업로드 권한과 다운로드 인증이다. 폐기가 **다음 요청부터** 듣는 것도 여기서 못 박는다
+- `language.test.mjs` — 영어 전용 규칙의 집행: 한글·일본어·중국어·러시아어 산문은 400
+  `english_only`, 백틱과 펜스 안의 원문 인용은 통과, 산문 아닌 필드(author·status)는 면제,
+  그리고 문턱(15%·두 글자) 자체를 못 박는다
 - `help-doc.test.mjs` — help 문서와 코드의 **양방향** 검사(유령 경로 금지·누락 금지),
   영문 단일 언어, 쿼리 힌트와 `LIST_PARAMS` 일치
 
@@ -136,15 +153,19 @@ pm2 restart baro-memo --update-env
   그리고 **CSS 계약**: `[hidden]`·`[open]` 로 여닫는 요소에 저자 스타일시트가 `display` 를 주면
   실패한다(shim 은 CSS 를 못 보므로 글자로 대조한다)
 
-아티팩트 저장소 38개, `apps/files/test/`:
+아티팩트 저장소 37개, `apps/files/test/`:
 
 - `store.test.mjs` — 구간 산수(병합·여집합), 선언 검증, 해시 불일치가 세션을 **지키는지**,
   dedupe, 쿼터·여유 예약, 유령 세션 정리, 그리고 **크래시 화해**(rename 뒤/전에 죽은 모양을
   손으로 만들어 재시작이 각각을 어떻게 수습하는지)와 진행 계수 가드
-- `identity.test.mjs` — 캐시 TTL·부정 캐시·**보드가 죽어도 묵은 답으로 버티는** 구간과 그 한도
+- `mount.test.mjs` — 접두사 경계(보드 경로를 삼키지 않는다·스트리밍 판정도 접두사 안에서만)와
+  **볼륨이 없을 때 마운트만 503** 인지. 후자가 프로세스를 합치며 새로 생길 뻔한 실패다
 - `routes.test.mjs` — 발행은 사람 토큰만, 남의 세션은 존재도 안 보임, 거절 코드별 상태
-- `e2e.test.mjs` — **진짜 서버 + 가짜 보드**로 소켓을 지나간다: 순서 없는 청크·끊긴 몸통·
-  재전송·교차 주입 차단·411/상한(날소켓)·흐르는 청크 중 finalize·sha 불일치 회복·리퍼 배선
+- `e2e.test.mjs` — **진짜 보드 서버**를 들고 소켓을 지나간다(0.11.0 부터 가짜 보드가 없다.
+  토큰도 진짜로 발급해 쓰므로 검사가 지나는 인증 경로가 운영과 같다): 순서 없는 청크·끊긴 몸통·
+  재전송·교차 주입 차단·411/상한(날소켓)·흐르는 청크 중 finalize·sha 불일치 회복·리퍼 배선·
+  서빙되는 업로드 스크립트에 **받아 간 주소**가 박히는지. 임시 뿌리가 비어 있는지도 확인한다 —
+  `process.loadEnvFile` 이 기존 env 를 안 덮는다는 동작에 기대므로, 뒤집히면 운영 볼륨에 쓴다
 
 ## Notes
 

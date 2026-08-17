@@ -81,7 +81,7 @@ DB 는 저장소 밖에 둡니다 — 운영 호스트는 `/mnt/data/baro_memo_d
 
 ```bash
 pnpm start     # = node apps/backend/src/server.mjs
-pnpm test      # node --test, 203개 (보드 125 + 아티팩트 38 + 관리자 페이지 40)
+pnpm test      # node --test, 218개 (보드 141 + 관리자 페이지 40 + 아티팩트 37)
 ```
 
 설정은 `.env` 하나이고 변경은 재시작해야 반영됩니다.

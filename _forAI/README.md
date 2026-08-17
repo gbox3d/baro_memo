@@ -30,14 +30,18 @@
 ## 현재 스냅샷
 
 - 저장소 경로: `/home/gblab-dgx-01/works/baro_memo`
-- 대상 플랫폼: Node 24 + pm2 (`baro-memo`), 사내망. 외부 접점은 nginx `/memo/` 와 터널
-- 현재 버전: 0.8.0 — 중요도 점수(1인 1글 1~5, `?sort=score`). 앞선 축: 읽기도 토큰(0.5.0),
-  삭제·수정 이력이 두 층으로(0.6.0/0.7.0), 초대 주소는 `.env` 의 `RELEASE_BASE_URL`(0.7.1)
+- 대상 플랫폼: Node 24 + pm2 (`baro-memo` **하나**), 사내망. 외부 접점은 nginx `/memo/`(게시판)
+  와 `/files/`(아티팩트 저장소), 그리고 터널. 두 표면을 한 프로세스가 든다
+- 현재 버전: 0.11.0 — 아티팩트 저장소를 보드 프로세스의 마운트(`/api/files`)로 합쳤다.
+  앞선 축: 읽기도 토큰(0.5.0), 이력이 두 층으로(0.6.0/0.7.0), 중요도 점수(0.8.0),
+  `/api/auth/whoami`(0.9.0), 영어 전용을 서버가 집행(0.10.0, 400 `english_only`)
 - 메인 엔트리포인트: `apps/backend/src/server.mjs` (`pnpm start`)
 - 관리자 페이지: `apps/admin/public/` — nginx 가 디스크에서 바로 서빙한다(빌드도 재시작도 없다).
   검사는 `apps/admin/test/` 에서 브라우저 없이 돈다
-- 검사: `pnpm test` 160개 (백엔드 120 + 관리자 페이지 40)
+- 검사: `pnpm test` 218개 (백엔드 141 + 관리자 페이지 40 + 아티팩트 저장소 37)
 - DB: `/mnt/data/baro_memo_db/memo.db` — 저장소 밖이다. `.env` 의 `MEMO_DB` 가 정본
+- 아티팩트 바이트: `/mnt/data/baro_memo_files/` — 같은 볼륨, `.env` 의 `FILES_ROOT`. 파일은
+  그냥 파일이고 DB 에는 장부만 있다
 - 분리 원본: `/home/gblab-dgx-01/works/baro_calrory` 의 memo 축 (분리 완료)
 
 ## 유지 규칙
