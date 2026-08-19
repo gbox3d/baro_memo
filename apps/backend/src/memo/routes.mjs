@@ -227,8 +227,20 @@ export function createMemoRoutes(ctx) {
       if (memoId === null) return json(404, { error: "No such memo.", code: "memo_not_found", id: history[1] });
       if (method !== "GET") return json(405, { error: "Method not supported on this path.", method, pathname });
       if (!auditStore) return json(503, { error: "Audit trail is not wired on this deployment.", code: "audit_unavailable" });
-      // 지워진 메모에도 답하는 축이라 메모 행으로 가시성을 물을 수 없다 — 이력 줄마다 남긴
-      // "사건 당시의 팀"이 문이다. 보이는 줄이 하나도 없으면 이력 없음과 같은 모양이 된다.
+      // **문이 둘이다.**
+      //
+      // ① 그 글이 지금(또는 지워졌다면 마지막에) 있던 팀이 보이는가. 안 보이면 이력도 통째로
+      //    없다 — 줄 단위 필터만 걸면 이동 **이전**에 쌓인 줄이 옛 팀 스탬프로 남아, 비밀 팀에
+      //    들어간 글이 "줄은 있는데 삭제 기록은 없다"는 제 3의 상태로 보인다. 그 차이가 곧
+      //    "그 글은 아직 어딘가 살아 있다"는 증명이고, 이 축에서 막으려던 것이 정확히 그것이다.
+      // ② 남은 줄 중에서도 자기가 못 보던 시절의 사건은 빼 준다(historyFor 의 teams). 그래서
+      //    비밀 팀에서 공개로 나온 글은 공개 이후의 이력만 보인다 — 비밀 시절에 누가 손댔는지는
+      //    그 팀의 것이다.
+      const live = memoStore.get(memoId);
+      const finalTeam = live ? live.team : auditStore.finalTeamOf(memoId);
+      if (finalTeam !== null && !canSee(finalTeam)) {
+        return json(200, { count: 0, total: 0, memoId, history: [] });
+      }
       const { total, history: entries } = auditStore.historyFor(memoId, { teams: visible });
       return json(200, { count: entries.length, total, memoId, history: entries });
     }
@@ -345,6 +357,10 @@ export function createMemoRoutes(ctx) {
         // 비밀 팀으로 끌고 가면 글쓴이는 자기 글을 못 보고, 달아 둔 댓글도 준 점수도 손댈 수
         // 없게 되며(전부 404), 그 글은 비밀 팀 안에서 계속 읽힌다. 남의 말을 데려가는 것이라
         // 편집이 아니라 소유의 문제다.
+        // 이동할 팀. undefined 면 이동 없음이고, 저장소는 **이 인자로만** 팀을 본다 — 본문의
+        // team 은 여기서 끝난다. 값이 두 곳에서 읽히면 두 조건이 어긋나는 날이 오고, 어긋난
+        // 틈은 문턱을 통째로 건너뛰는 길이 된다(실제로 그랬다).
+        let moveTo;
         if (body?.team != null) {
           const target = String(body.team).trim();
           if (!target || !teamStore.get(target) || !teamStore.canPost(user, target)) {
@@ -356,9 +372,9 @@ export function createMemoRoutes(ctx) {
               code: "team_move_not_owner", retryable: false,
             });
           }
-          body = { ...body, team: target };
+          moveTo = target;
         }
-        try { return json(200, { memo: memoStore.update(id, body, user) }); }
+        try { return json(200, { memo: memoStore.update(id, body, user, moveTo) }); }
         catch (error) { return badRequest(error); }
       }
 

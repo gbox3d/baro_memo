@@ -84,9 +84,24 @@ export class AuditStore {
    * 한 메모의 이력, 사용자에게 보이는 만큼(내용 없이). **메모가 이미 지워졌어도 답한다** —
    * "그 메모 어디 갔나"가 이 축이 존재하는 이유라, 여기서 404 를 내면 물어볼 곳이 없어진다.
    */
+  /**
+   * 지워진 글이 **마지막에 있던 팀**. 삭제 기록의 스탬프가 그 답이다(없으면 null).
+   *
+   * 라우터가 이력의 문을 여기서 얻는다. 줄 단위 필터만으로는 부족했다: 이동 전에 쌓인 줄은
+   * 옛 팀(대개 team-n) 스탬프를 그대로 갖고 있어서, 비밀 팀으로 옮겨진 글이 "줄은 있는데
+   * 삭제 기록은 없고 글은 404" 라는 **세 번째 상태**로 보였다 — 없는 글·지워진 글과 구분되면
+   * 그게 곧 존재 증명이다.
+   */
+  finalTeamOf(memoId) {
+    const row = this.db
+      .prepare("SELECT team FROM audit WHERE memo_id = ? AND action = 'memo_delete' ORDER BY id DESC LIMIT 1")
+      .get(memoId);
+    return row ? row.team : null;
+  }
+
   // teams 는 보는 사람의 가시 팀이다(null = 전부). **줄 단위로** 거른다 — 글이 팀을 옮겨
-  // 다녔으면 각 사건은 그 사건이 일어난 팀의 구성원에게만 보인다. 메모가 지워진 뒤에는
-  // 이 필터가 유일한 문이다(메모 행이 없어 팀을 물어볼 곳이 이력뿐이다).
+  // 다녔으면 각 사건은 그 사건이 일어난 팀의 구성원에게만 보인다. 이 필터는 두 번째 문이다:
+  // 첫 번째 문(그 글이 지금/마지막에 있던 팀이 보이는가)은 라우터가 연다.
   historyFor(memoId, { limit = AUDIT_LIMIT.default, offset = 0, teams = null } = {}) {
     const { total, entries } = this.list({ memoId, limit, offset, teams });
     return { total, history: entries.map(toPublicEntry) };

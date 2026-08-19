@@ -342,3 +342,129 @@ test("whoami 의 teams 는 실제로 쓸 수 있는 팀이다 — super 가 자�
   const listed = (await memo("GET", "/api/teams", {}, "exec")).json.teams.map((t) => t.name);
   assert.deepEqual([...teams].sort(), [...listed].sort());
 });
+
+// ---- 2판 검토: 수정이 만든 결함 (v0.13.1) ---------------------------------------------------
+//
+// 1판의 수정 넷 중 하나가 **치명적 결함을 새로 만들었다.** 라우터는 팀을 `!= null` 로 걸렀는데
+// 저장소는 `!== undefined` 로 썼다 — 같은 값을 두 곳에서 다르게 읽었고, 그 틈으로 팀이 null 인
+// 본문이 문턱 둘(목적지 소속·주인 확인)을 통째로 건너뛰어 문자열 "null" 로 저장됐다.
+// 결과는 유출이 아니라 **파괴**였다: 아무 토큰이나 남의 글을 아무도 못 보는 곳으로 보내고,
+// 주인은 되돌릴 수도 이력을 볼 수도 없었다(이력의 팀도 "null" 로 찍히므로).
+//
+// 고침은 조건 맞추기가 아니라 **출처 하나로**다 — create() 가 애초에 안전했던 이유가 그것이고
+// (본문의 team 을 읽지 않고 검증된 인자만 받는다), update() 도 같은 모양으로 맞췄다.
+
+test("team:null 은 이동이 아니다 — 문턱을 건너뛰지도, 글을 삼키지도 않는다", async () => {
+  const { memo } = rig();
+  const { json: made } = await memo("POST", "/api/memos", { title: "public", body: "everyone" }, "staff");
+  const id = made.memo.id;
+
+  // 남이 보내도 팀은 그대로다. 예전에는 여기서 memo.team 이 "null" 이 됐다.
+  const attack = await memo("PATCH", `/api/memos/${id}`, { team: null, status: "done" }, "boss");
+  assert.equal(attack.status, 200);
+  assert.equal(attack.json.memo.team, DEFAULT_TEAM, "null 이 팀 자리에 저장되면 글이 사라진다");
+  assert.equal((await memo("GET", `/api/memos/${id}`, {}, "staff")).status, 200, "주인이 자기 글을 계속 본다");
+
+  // 주인의 읽고-고쳐-쓰기(빈 칸을 null 로 직렬화하는 흔한 클라이언트)도 자기 글을 안 잃는다.
+  const rmw = await memo("PATCH", `/api/memos/${id}`, { title: "renamed", team: null }, "staff");
+  assert.equal(rmw.json.memo.team, DEFAULT_TEAM);
+
+  // team 만 null 로 보낸 PATCH 는 바꿀 것이 없는 요청이다 — 200 으로 성공을 흉내 내지 않는다.
+  assert.equal((await memo("PATCH", `/api/memos/${id}`, { team: null }, "staff")).json.code, "no_fields");
+});
+
+test("저장소는 팀을 인자로만 받는다 — 본문이 저장소까지 흘러도 팀은 안 바뀐다", () => {
+  const { memoStore } = rig();
+  const made = memoStore.create({ body: "b" }, "kim");
+  // 라우터를 건너뛴 호출을 흉내 낸다: patch 에 team 이 들어 있어도 무시돼야 한다.
+  const after = memoStore.update(made.id, { body: "b2", team: "secret" }, "kim");
+  assert.equal(after.team, DEFAULT_TEAM, "본문에서 팀을 읽으면 라우터의 문턱이 우회된다");
+  // 인자로 준 값만 반영된다(라우터가 검증을 마친 값이다).
+  assert.equal(memoStore.update(made.id, { body: "b3" }, "kim", "secret").team, "secret");
+});
+
+test("값 없음으로 읽히는 이름은 팀이 될 수 없다", () => {
+  const { teamStore } = rig();
+  for (const bad of ["null", "undefined", "none", "nan"]) {
+    assert.throws(() => teamStore.create({ name: bad }), { code: "invalid_team_name" }, bad);
+  }
+});
+
+// ---- 이력의 오라클 (v0.13.1) -----------------------------------------------------------------
+//
+// 이동 줄만 감추는 것으로는 부족했다. 이동 **이전**에 쌓인 줄들이 옛 팀 스탬프로 남아 있어서,
+// 비밀 팀에 들어간 글이 "줄은 있는데 삭제 기록은 없고 글은 404" 라는 **제 3의 상태**로 보였다.
+// 그 차이가 곧 "그 글은 아직 어딘가 살아 있다"는 증명이다. 문을 둘로 나눠 닫는다:
+// ① 그 글이 마지막에 있던 팀이 안 보이면 이력도 통째로 없다 ② 남은 줄 중 못 보던 시절은 뺀다.
+
+test("이력의 세 상태가 한 답으로 무너진다 — 이동·이동 후 삭제·애초에 없음", async () => {
+  const { memo } = rig();
+  // boss 의 공개 글에 공개 상태의 수정 한 번(team-n 스탬프 줄이 쌓인다) — 이게 옛 누출의 재료였다.
+  const seed = async (body) => {
+    const { json } = await memo("POST", "/api/memos", { body }, "boss");
+    await memo("PATCH", `/api/memos/${json.memo.id}`, { status: "doing" }, "boss");
+    return json.memo.id;
+  };
+  const probe = async (id) => {
+    const g = await memo("GET", `/api/memos/${id}`, {}, "staff");
+    const h = await memo("GET", `/api/memos/${id}/history`, {}, "staff");
+    return `${g.status}/${h.json.total}`;
+  };
+
+  const moved = await seed("one");
+  await memo("PATCH", `/api/memos/${moved}`, { team: "secret" }, "boss");
+
+  const gone = await seed("two");
+  await memo("PATCH", `/api/memos/${gone}`, { team: "secret" }, "boss");
+  await memo("DELETE", `/api/memos/${gone}`, {}, "boss");
+
+  const never = 999999;
+  assert.equal(await probe(moved), "404/0", "비밀 팀으로 옮겨진 글");
+  assert.equal(await probe(gone), "404/0", "옮긴 뒤 비밀 팀에서 지워진 글");
+  assert.equal(await probe(never), "404/0", "애초에 없는 글 — 셋이 같은 답이어야 한다");
+
+  // 반대로 **공개 상태로 지워진 글**은 그대로 말해 준다. 그 글을 보던 사람들의 것이라서다.
+  const deletedInPublic = await seed("three");
+  await memo("DELETE", `/api/memos/${deletedInPublic}`, {}, "boss");
+  assert.equal(await probe(deletedInPublic), "404/2");
+
+  // 기록이 사라진 것도 아니다 — 팀 안에서는 그대로다.
+  assert.equal((await memo("GET", `/api/memos/${moved}/history`, {}, "boss")).json.total, 2);
+});
+
+test("공개로 나온 글은 공개 이후의 이력만 보인다 — 비밀 시절에 누가 손댔는지는 그 팀의 것", async () => {
+  const { memo } = rig();
+  const { json: made } = await memo("POST", "/api/memos", { body: "b" }, "boss");
+  const id = made.memo.id;
+  await memo("PATCH", `/api/memos/${id}`, { team: "secret" }, "boss");
+  await memo("PATCH", `/api/memos/${id}`, { title: "edited while confidential" }, "boss");
+  await memo("PATCH", `/api/memos/${id}`, { team: DEFAULT_TEAM }, "boss");
+
+  const seen = await memo("GET", `/api/memos/${id}/history`, {}, "staff");
+  assert.equal(seen.status, 200);
+  assert.equal(JSON.stringify(seen.json.history).includes("title"), false,
+    "비밀 시절의 수정이 공개되면 그 팀에 누가 있었는지가 새어 나간다");
+  assert.ok((await memo("GET", `/api/memos/${id}/history`, {}, "boss")).json.total > seen.json.total,
+    "멤버는 전부 본다");
+});
+
+test("팀 비고는 문자열이어야 한다 — 상한을 옮기며 타입 검사를 잃었던 자리", () => {
+  const { teamStore } = rig();
+  assert.throws(() => teamStore.create({ name: "lab-y", note: { a: 1 } }), { code: "invalid_field" });
+  assert.throws(() => teamStore.create({ name: "lab-y", note: "x".repeat(201) }), { code: "too_long" });
+  // 거절 메시지가 자기 칸 이름을 불러야 고칠 사람이 무엇을 줄일지 안다.
+  try { teamStore.create({ name: "lab-y", note: "x".repeat(201) }); }
+  catch (e) { assert.match(e.message, /^note /); }
+  assert.equal(teamStore.create({ name: "lab-y" }).note, "", "비고는 선택이다");
+});
+
+test("잘못 친 팀 이름은 '없는 팀'이지 '없는 경로'가 아니다 — 관리자 축", async () => {
+  const { admin } = rig();
+  const res = await admin("POST", "/api/admin/teams/SECRET/members", { user: "staff" });
+  assert.equal(res.status, 404);
+  assert.equal(res.json.code, "team_not_found", "admin_route_not_found 면 팀 이름을 의심하지 않는다");
+  // 빈 사용자는 넣기·빼기 양쪽에서 같은 거절이다.
+  for (const method of ["POST", "DELETE"]) {
+    assert.equal((await admin(method, "/api/admin/teams/secret/members", { user: "  " })).json.code, "empty_user", method);
+  }
+});

@@ -24,6 +24,10 @@ export const SUPER_TEAM = "super";
 // 공백·대문자·유니코드를 받으면 "왜 안 맞지"가 만들어진다.
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const NOTE_MAX = 200;  // 토큰의 note 와 같은 상한 — 같은 자리에 같은 성격의 값이다
+// 슬러그로는 적법하지만 팀 이름으로 두면 로그·화면에서 "값이 없음"과 구분되지 않는 낱말들.
+// 값이 null 인 본문이 문자열로 저장되던 결함이 있었고, 그때 이 이름의 팀이 존재했다면 잃어버린
+// 글이 남의 팀에서 읽혔다. 결함은 고쳤지만 이름 쪽 함정은 따로 닫아 둔다.
+const RESERVED = new Set(["null", "undefined", "none", "nan"]);
 
 function toRecord(row) {
   if (!row) return null;
@@ -59,9 +63,16 @@ export class TeamStore {
     if (!NAME_RE.test(name)) {
       throw fail("invalid_team_name", "team name must match ^[a-z0-9][a-z0-9_-]{0,31}$ — lowercase slug, it travels in URLs.");
     }
+    if (RESERVED.has(name)) {
+      throw fail("invalid_team_name", `"${name}" cannot be a team name — it reads as a missing value.`);
+    }
     if (this.get(name)) throw fail("team_exists", `Team "${name}" already exists.`);
     // 상한은 여기서 잰다. memo 의 text() 를 빌려 쓰면 거절 메시지가 남의 칸 이름을 부른다
-    // ("title exceeds the cap") — 고칠 사람이 무엇을 줄여야 하는지 모르게 된다.
+    // ("title exceeds the cap") — 고칠 사람이 무엇을 줄여야 하는지 모르게 된다. 다만 그때
+    // 타입 검사까지 같이 잃었다: 객체를 넣으면 "[object Object]" 가 조용히 저장됐다.
+    if (input.note !== undefined && input.note !== null && typeof input.note !== "string") {
+      throw fail("invalid_field", "note must be a string.");
+    }
     const note = String(input.note ?? "").trim();
     if (note.length > NOTE_MAX) throw fail("too_long", `note exceeds the cap (${NOTE_MAX} chars).`);
     this.db.prepare("INSERT INTO team (name, note, builtin, created_at) VALUES (?, ?, 0, ?)")

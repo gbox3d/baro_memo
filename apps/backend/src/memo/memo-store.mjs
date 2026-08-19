@@ -269,13 +269,19 @@ export class MemoStore {
   }
 
   // 부분 갱신. 보내지 않은 필드는 건드리지 않는다. updated_by 는 매번 토큰의 사용자로 찍힌다.
-  // patch.team 은 라우터가 목적지 소속까지 검증한 값이다(본문의 날값이 아니다).
-  update(id, patch = {}, user = "") {
+  //
+  // **팀은 patch 에서 읽지 않는다** — create() 와 같은 규약으로 네 번째 인자로만 받는다
+  // (undefined 면 이동 없음). 본문의 날값을 여기서 읽던 판이 잠깐 있었고, 그때 라우터의
+  // 문턱과 이 자리의 조건이 서로 달라졌다: 라우터는 patch.team != null 로 걸렀는데 여기는
+  // !== undefined 로 썼다. 그 틈으로 팀이 null 인 본문이 검증을 통째로 건너뛰고 문자열
+  // "null" 로 저장돼, 아무 토큰이나 남의 글을 아무도 못 보는 곳으로 보낼 수 있었다(주인도,
+  // 이력도 못 본다). **값의 출처가 하나면 두 조건이 어긋날 자리가 없다.**
+  update(id, patch = {}, user = "", team = undefined) {
     const before = this.get(id);
     if (!before) return null;
     const sets = [];
     const values = [];
-    if (patch.team !== undefined) { sets.push("team = ?"); values.push(String(patch.team)); }
+    if (team !== undefined) { sets.push("team = ?"); values.push(String(team)); }
     if (patch.title !== undefined) { sets.push("title = ?"); values.push(text(patch.title, "title")); }
     if (patch.body !== undefined) {
       const body = text(patch.body, "body");
