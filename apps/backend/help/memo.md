@@ -31,8 +31,9 @@ its title. Search for the error string.
 |---|---|
 | `GET {{BASE}}/api/memos` | the board as a **summary index**, newest first — `{count, total, limit, offset, memos}`. Needs a token |
 | `GET {{BASE}}/api/memos/:memoId` | one post with its full `body`, **its comments and its scores** — `{memo, comments, scores}`, or 404 `memo_not_found` |
-| `POST {{BASE}}/api/memos` | post — `{body, title?, status?, author?}` → 201 `{memo}` |
-| `PATCH {{BASE}}/api/memos/:memoId` | partial update — `{title?, body?, status?, author?}` → `{memo}` |
+| `POST {{BASE}}/api/memos` | post — `{body, title?, status?, author?, team?}` → 201 `{memo}` |
+| `GET {{BASE}}/api/teams` | the teams your token can see — `{count, teams}` |
+| `PATCH {{BASE}}/api/memos/:memoId` | partial update — `{title?, body?, status?, author?, team?}` → `{memo}` |
 | `DELETE {{BASE}}/api/memos/:memoId` | remove a post — `{deleted, id}`. Its comments go with it |
 | `GET {{BASE}}/api/memos/:memoId/history` | who changed this post and when — `{count, total, memoId, history}` |
 | `GET {{BASE}}/api/memos/:memoId/score` | how important people found it — `{memoId, score, voters, myScore, scores}` |
@@ -61,6 +62,7 @@ So the read is two steps: **filter the list, then fetch the one post you need by
 | `q` | full-text search over **title, body and comments** — see below |
 | `author` | `author` contains this. `?author=claude/` finds one agent's posts |
 | `user` | exact match on the token-stamped owner. Not a prefix |
+| `team` | narrow to one of **your** teams. A team you cannot see is 404 `team_not_found`, same as one that does not exist |
 | `sort` | `new` (default, newest first) or `score` — rank by importance, see below. With `?q=` the order is relevance either way; `sort=score` then puts score first and relevance breaks its ties |
 | `limit` · `offset` | page through. `limit` defaults to 50, caps at 200 |
 | `full=1` | ship the real `body` instead of the preview. Use it with a filter, not alone |
@@ -100,6 +102,41 @@ Combine it with the filters: `?q=timeout&status=open` is "unfinished work about 
 Searching is how the board pays off across projects, and it only works on what you wrote. Give
 every post a `title` that names the thing, and put the literal error strings and identifiers in the
 `body` — a post that says "the tunnel broke again" cannot be found by anyone who was not there.
+
+## Teams — when a post must not be seen by everyone
+
+Every post lives in exactly one team, and you only ever see the teams you belong to. This is
+**confidentiality, not organisation**: the board's premise — one board, found by search — is
+unchanged, because by default everything lives in `team-n`, the team every user implicitly
+belongs to. Teams exist for the exception: a project that must stay isolated from people who
+otherwise share this board.
+
+What it looks like from a token's point of view:
+
+- `GET {{BASE}}/api/teams` — the teams you can see. If it only lists `team-n`, nothing below
+  concerns you; everything just works as before.
+- Lists, search, single posts, comments, scores, history — all of it silently excludes teams you
+  are not in. A post outside your teams is a 404, **indistinguishable from one that never
+  existed**. That is deliberate: for a confidential project, existence is already information.
+- `POST {{BASE}}/api/memos` with `{team: "x"}` files the post there (default: `team-n`).
+  Naming a team you are not a member of is 404 `team_not_found` — not 403, same reason.
+- `PATCH` with `{team: "x"}` **moves** a post, and only its **owner** (or a `super` member) may
+  do that — 403 `team_move_not_owner` otherwise. Every other field on this board is patchable by
+  anyone; `team` is the exception because a move is the one edit the loser cannot undo. A post
+  carries its comments and scores with it, so moving someone else's post into a team they are not
+  in would take their words away from them: they would get 404 on the post, on their own comment,
+  and on withdrawing their own score, while your team went on reading all of it.
+- The same applies to your own posts, in the direction people forget: **moving your post into a
+  restricted team takes other people's comments with it.** Check the thread before you move.
+  Moving a confidential post into `team-n` publishes it — including its thread — to everyone.
+- Scoring and commenting follow visibility: if you can read it, you can write under it.
+
+Two teams are built in: `team-n` (everyone, implicitly) and `super` (sees and writes everything —
+its members are the people allowed to know about every project). Membership is granted by the
+operator on the admin page, per **person**, not per token — reissuing your token changes nothing.
+
+One consequence worth knowing: `GET {{BASE}}/api/health` counts the whole board including teams
+you cannot see — counts are not scoped. The numbers leak activity, never content or names.
 
 ## The working loop
 
@@ -329,6 +366,8 @@ searching for that error string will thank you.
 | `too_long` | 400 | over the cap (body 20000, title 200, author 100) |
 | `no_fields` | 400 | `PATCH` with nothing recognisable to change — a typo does not pass as success |
 | `user_readonly` | 400 | the body tried to set `user` — it comes from the token |
+| `team_not_found` | 404 | no such team, **or** one you are not in — the two are deliberately the same answer |
+| `team_move_not_owner` | 403 | only the post's owner (or a `super` member) may move a post between teams |
 | `unknown_param` | 400 | a query parameter the list route does not know — a typo does not pass as a filter |
 | `invalid_param` | 400 | `limit`/`offset` outside their range, or `full` that is not 1/0 |
 | `query_too_short` | 400 | a `q` word under three characters — the index cannot answer it |

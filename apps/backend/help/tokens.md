@@ -68,9 +68,33 @@ holding one could mint identities and attribution would collapse.
 | `POST {{BASE}}/api/admin/tokens` | issue — `{user, note?}` → 201 `{token}` |
 | `DELETE {{BASE}}/api/admin/tokens/:tokenId` | revoke. Soft — the row stays, so old posts keep their provenance |
 | `GET {{BASE}}/api/admin/audit` | deletion and edit history — `{count, total, limit, offset, entries}` |
+| `GET {{BASE}}/api/admin/teams` | every team **with its member list** — rosters live only on this surface |
+| `POST {{BASE}}/api/admin/teams` | create a team — `{name, note?}` → 201 `{team}`. Name is a lowercase slug |
+| `POST {{BASE}}/api/admin/teams/:team/members` | add a person — `{user}` → `{added, team, members}`. Idempotent |
+| `DELETE {{BASE}}/api/admin/teams/:team/members` | remove a person — `{user}` → `{removed, team, members}`. Idempotent |
 
 The human-facing tool for these routes is the admin page (`/memo/admin/` behind nginx). Revocation
 is the whole lifecycle: there is no expiry, so a token lives until an operator revokes it.
+
+## Teams — who a person is allowed to see
+
+Access to posts is per **team** (see the [memo]({{BASE}}/api/help/memo) topic for how it looks to
+users). The operator manages it here. Four rules:
+
+- **Membership belongs to the person, not the token.** You grant `user` strings — the same value
+  tokens stamp. Revoking and reissuing someone's token never touches their teams.
+- **Two teams are built in.** `team-n` is the default board: every user belongs implicitly, no
+  row needed (adding one is refused with `default_team_implicit`). `super` members see and write
+  every team — the executive tier for confidential projects.
+- **The user goes in the request body**, not the URL path — user names on this board are not
+  always URL-safe, and a mis-encoded path segment would "succeed" on the wrong name.
+- **Teams cannot be deleted**, deliberately: deleting one either orphans its posts or exposes
+  them, and both are incidents. Empty a team of members instead.
+- **Moving posts between teams is the owner's call, not a member's.** Anyone can edit anyone's
+  post here, but only the owner (or a `super` member) can move one — a move is the single edit
+  the other party cannot undo, and it carries their comments and scores along with it.
+
+The admin token itself sees every team (it is the operator), but still cannot post to any.
 
 ## The audit trail
 

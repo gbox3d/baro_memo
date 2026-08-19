@@ -19,6 +19,7 @@ import { json } from "../core/http.mjs";
 import { LIST_LIMIT, MEMO_SORTS, MEMO_STATUSES, toMemoId } from "./memo-store.mjs";
 import { toCommentId } from "./comment-store.mjs";
 import { isAdminToken } from "../core/admin-token.mjs";
+import { DEFAULT_TEAM } from "../auth/team-store.mjs";
 
 // 헤더 두 곳: 전용 `x-memo-token` 과 표준 `Authorization: Bearer`. 도구 사정이다 — 일부
 // 클라이언트는 Authorization 을 자기 인증에 이미 쓴다.
@@ -44,7 +45,7 @@ function fail(code, message) {
 //
 // 여기 없는 이름은 거절한다. 조용히 무시하면 `?staus=open` 이 보드 전체를 200 으로 돌려주고,
 // 소비자는 필터가 걸린 줄 안다 — 본문의 오타를 no_fields 로 거절하는 것과 같은 결이다.
-const LIST_PARAMS = new Set(["status", "q", "author", "user", "limit", "offset", "full", "sort"]);
+const LIST_PARAMS = new Set(["status", "q", "author", "user", "limit", "offset", "full", "sort", "team"]);
 
 function asParams(query) {
   return query instanceof URLSearchParams ? query : new URLSearchParams(query || "");
@@ -99,6 +100,7 @@ export function parseListQuery(query) {
   return {
     status,
     sort,
+    team: (params.get("team") || "").trim(),
     q: (params.get("q") || "").trim(),
     author: (params.get("author") || "").trim(),
     user: (params.get("user") || "").trim(),
@@ -109,10 +111,14 @@ export function parseListQuery(query) {
 }
 
 export function createMemoRoutes(ctx) {
-  const { memoStore, tokenStore, commentStore, voteStore = null, auditStore = null, adminToken = "" } = ctx;
+  const { memoStore, tokenStore, commentStore, teamStore, voteStore = null, auditStore = null, adminToken = "" } = ctx;
+  // 팀 스토어는 선택이 아니다. 없으면 기본값이 "전부 보임"이 되는데, 그건 배선 하나가 빠진
+  // 날 비밀 팀이 통째로 열리는 실패다 — 그 실패는 기동 때 죽는 쪽이 낫다.
+  if (!teamStore) throw new Error("createMemoRoutes: teamStore is required — visibility fails open without it.");
 
   return async function handleMemo(method, pathname, query = null, body = {}, headers = {}) {
-    if (pathname !== "/api/memos" && !pathname.startsWith("/api/memos/")) return null;
+    const mine = pathname === "/api/memos" || pathname.startsWith("/api/memos/") || pathname === "/api/teams";
+    if (!mine) return null;
 
     const presented = presentedToken(headers);
     // 관리자 토큰은 **읽기까지**다. 쓰기로 인정하지 않는 이유: 그 값에는 사람이 없어서 user 를
@@ -133,6 +139,30 @@ export function createMemoRoutes(ctx) {
         error: "The board needs a token, for reads as well as writes — header x-memo-token or Authorization: Bearer. Ask the operator for one.",
         code: "memo_token_invalid", retryable: false,
       });
+    }
+
+    // 이 사람에게 보이는 팀 — null 은 "전부"(운영자·super). 이 아래의 모든 읽기·쓰기가
+    // 이 값 하나로 걸러진다. 경로마다 따로 계산하면 언젠가 한 경로가 빠진다.
+    const visible = teamStore.visibleTeams(user || "", { operator: operator || user === null });
+    const canSee = (team) => visible === null || visible.includes(team);
+    // 보이는 메모만 돌려준다 — 안 보이는 메모는 **없는 메모와 같은 404** 다. 403 은 "있긴
+    // 하다"를 말해 주는데, 비밀 프로젝트는 존재 자체가 비밀이다.
+    const seen = (id, viewer = "") => {
+      const memo = memoStore.get(id, viewer);
+      return memo && canSee(memo.team) ? memo : null;
+    };
+    const teamNotFound = (name) => json(404, {
+      error: `No such team: "${name}".`, code: "team_not_found", retryable: false,
+    });
+
+    // 내 팀 목록. 자기에게 보이는 팀만 준다 — 팀의 존재가 곧 정보라서, 전체 목록은 관리자
+    // 축(/api/admin/teams)에만 있다. super·운영자는 전부(그들에겐 전부가 보이는 팀이다).
+    if (pathname === "/api/teams") {
+      if (method !== "GET") return json(405, { error: "Method not supported on this path.", method, pathname });
+      const teams = visible === null
+        ? teamStore.list().map(({ members, ...t }) => t)  // 구성원 명단은 관리자 축의 것이다
+        : visible.map((name) => teamStore.get(name)).filter(Boolean);
+      return json(200, { count: teams.length, teams });
     }
 
     if (method !== "GET") {
@@ -159,7 +189,14 @@ export function createMemoRoutes(ctx) {
         const options = parseListQuery(query);
         // viewer 는 쿼리가 아니라 **토큰**에서 온다 — myScore 는 부르는 사람마다 다른 값이고,
         // 쿼리로 받으면 남의 표를 조회하는 길이 열린다.
-        const { total, memos } = memoStore.list({ ...options, viewer: user || "" });
+        // ?team= 은 보이는 팀 안에서의 좁히기다. 안 보이는 팀 이름은 없는 팀과 같은 404 —
+        // 200 빈 목록은 "그 팀은 비어 있다"는 다른 사실이 된다.
+        let teams = visible;
+        if (options.team) {
+          if (!canSee(options.team) || !teamStore.get(options.team)) return teamNotFound(options.team);
+          teams = [options.team];
+        }
+        const { total, memos } = memoStore.list({ ...options, viewer: user || "", teams });
         return json(200, {
           count: memos.length, total, limit: options.limit, offset: options.offset, memos,
         });
@@ -167,7 +204,11 @@ export function createMemoRoutes(ctx) {
     }
 
     if (method === "POST" && pathname === "/api/memos") {
-      try { return json(201, { memo: memoStore.create(body, user) }); }
+      // 글의 팀은 본문으로 고르되, 저장소에는 검증을 통과한 값만 넘어간다. 소속이 아닌 팀은
+      // 존재를 말하지 않는다(404) — 어느 팀에 못 쓰는지의 목록이 곧 팀 목록이 되기 때문이다.
+      const team = body?.team === undefined ? DEFAULT_TEAM : String(body.team || "").trim();
+      if (!team || !teamStore.get(team) || !teamStore.canPost(user, team)) return teamNotFound(body?.team);
+      try { return json(201, { memo: memoStore.create(body, user, team) }); }
       catch (error) { return badRequest(error); }
     }
 
@@ -184,7 +225,9 @@ export function createMemoRoutes(ctx) {
       if (memoId === null) return json(404, { error: "No such memo.", code: "memo_not_found", id: history[1] });
       if (method !== "GET") return json(405, { error: "Method not supported on this path.", method, pathname });
       if (!auditStore) return json(503, { error: "Audit trail is not wired on this deployment.", code: "audit_unavailable" });
-      const { total, history: entries } = auditStore.historyFor(memoId);
+      // 지워진 메모에도 답하는 축이라 메모 행으로 가시성을 물을 수 없다 — 이력 줄마다 남긴
+      // "사건 당시의 팀"이 문이다. 보이는 줄이 하나도 없으면 이력 없음과 같은 모양이 된다.
+      const { total, history: entries } = auditStore.historyFor(memoId, { teams: visible });
       return json(200, { count: entries.length, total, memoId, history: entries });
     }
 
@@ -199,7 +242,7 @@ export function createMemoRoutes(ctx) {
     const score = pathname.match(/^\/api\/memos\/([^/]+)\/score$/);
     if (score) {
       const memoId = toMemoId(score[1]);
-      const memo = memoId === null ? null : memoStore.get(memoId);
+      const memo = memoId === null ? null : seen(memoId);
       // 이력과 달리 지워진 글에는 답하지 않는다 — 표는 글과 함께 사라졌고, 여기서 0 을
       // 돌려주면 "아무도 중요하다고 안 했다"는 다른 사실이 된다.
       if (!memo) return json(404, { error: "No such memo.", code: "memo_not_found", id: score[1] });
@@ -240,7 +283,7 @@ export function createMemoRoutes(ctx) {
     const comments = pathname.match(/^\/api\/memos\/([^/]+)\/comments$/);
     if (comments) {
       const memoId = toMemoId(comments[1]);
-      const memo = memoId === null ? null : memoStore.get(memoId);
+      const memo = memoId === null ? null : seen(memoId);
       // 없는 메모에 다는 댓글은 조용히 떠돌게 두지 않는다 — 메모 축과 같은 404.
       if (!memo) return json(404, { error: "No such memo.", code: "memo_not_found", id: comments[1] });
 
@@ -259,6 +302,10 @@ export function createMemoRoutes(ctx) {
     if (commentItem) {
       const commentId = toCommentId(commentItem[2]);
       const comment = commentId === null ? null : commentStore.get(commentId);
+      // 댓글의 가시성은 메모를 따른다 — 안 보이는 메모의 댓글은 id 를 맞혀도 없는 것이다.
+      if (comment && !seen(comment.memoId)) {
+        return json(404, { error: "No such comment.", code: "comment_not_found", id: commentItem[2] });
+      }
       // 다른 메모의 댓글 id 로 지우려는 요청은 "그런 댓글은 없다"다. 경로가 사실과 다르면
       // 지워 주는 쪽이 더 위험하다 — 지운 사람은 자기가 무엇을 지웠는지 모른다.
       if (!comment || String(comment.memoId) !== String(toMemoId(commentItem[1]))) {
@@ -274,7 +321,7 @@ export function createMemoRoutes(ctx) {
       const id = toMemoId(item[1]);
       // 숫자가 아닌 id 는 그 자체로 없는 문서다. 소비자가 할 일이 "요청을 고쳐라"가 아니라
       // "그런 메모는 없다"로 같으므로 400 이 아니라 404.
-      const memo = id === null ? null : memoStore.get(id, user || "");
+      const memo = id === null ? null : seen(id, user || "");
       if (!memo) return json(404, { error: "No such memo.", code: "memo_not_found", id: item[1] });
 
       // 한 건은 **문서**다. 댓글을 같이 실어 주지 않으면 소비자는 commentCount 를 보고 한 번 더
@@ -289,6 +336,26 @@ export function createMemoRoutes(ctx) {
       }
 
       if (method === "PATCH") {
+        // 팀 이동. 목적지는 소속이어야 하고, **글 주인(또는 super)만** 옮길 수 있다.
+        //
+        // 다른 칸의 PATCH 는 아무나 한다(이 보드의 규약이고, 덮인 값은 이력에 남아 되돌릴 수
+        // 있다). 팀 이동만 다른 이유: 되돌릴 수 없는 쪽이 **당한 사람**이다. 남의 공개 글을
+        // 비밀 팀으로 끌고 가면 글쓴이는 자기 글을 못 보고, 달아 둔 댓글도 준 점수도 손댈 수
+        // 없게 되며(전부 404), 그 글은 비밀 팀 안에서 계속 읽힌다. 남의 말을 데려가는 것이라
+        // 편집이 아니라 소유의 문제다.
+        if (body?.team !== undefined) {
+          const target = String(body.team || "").trim();
+          if (!target || !teamStore.get(target) || !teamStore.canPost(user, target)) {
+            return teamNotFound(body.team);
+          }
+          if (memo.user !== user && !teamStore.isSuper(user)) {
+            return json(403, {
+              error: "Only the post's owner (or a super member) can move it to another team — moving it takes other people's comments and scores with it.",
+              code: "team_move_not_owner", retryable: false,
+            });
+          }
+          body = { ...body, team: target };
+        }
         try { return json(200, { memo: memoStore.update(id, body, user) }); }
         catch (error) { return badRequest(error); }
       }

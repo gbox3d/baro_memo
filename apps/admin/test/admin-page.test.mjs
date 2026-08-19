@@ -616,3 +616,83 @@ test("저장해 둔 정렬 축으로 열린다", async () => {
   assert.equal(page.memoSort.value, "score");
   assert.match(page.requests.find((r) => r.path.includes("memos?")).path, /sort=score/);
 });
+
+// ---- 팀 구획 ----------------------------------------------------------------------------
+//
+// 백엔드의 격리는 team.test.mjs 가 지킨다. 여기서 지키는 것은 운영자의 손이다: 팀을 만들고
+// 사람을 넣고 빼는 세 동작이 실제로 그 요청을 만들고, 낡은 백엔드에서 페이지가 죽지 않는 것.
+
+test("팀 목록: 내장 둘이 보이고 기본팀 인원은 '전원'이다", async () => {
+  const page = loadAdminPage({ adminToken: "adm" });
+  await page.settled;
+  const rows = page.node("#team-list tbody").children;
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].innerHTML, /team-n/);
+  assert.match(rows[0].innerHTML, /전원/, "기본팀은 셀 인원이 없다 — 전원이 암묵 소속이다");
+  assert.match(rows[1].innerHTML, /super/);
+});
+
+test("팀 생성이 요청을 만들고, 만든 팀이 선택된다 — 다음 동작은 사람을 넣는 것이다", async () => {
+  const page = loadAdminPage({ adminToken: "adm" });
+  await page.settled;
+  page.node("#team-name").value = "lab-x";
+  page.node("#team-note").value = "비밀 프로젝트";
+  await page.node("#team-create")._on.submit({ preventDefault() {} });
+  await page.settled;
+
+  const made = page.requests.find((r) => r.method === "POST" && r.path.includes("/admin/teams") && !r.path.includes("/members"));
+  assert.ok(made, "POST /admin/teams 가 나가야 한다");
+  assert.equal(JSON.parse(made.body).name, "lab-x");
+  assert.match(page.status(), /lab-x 생성됨/);
+  const detail = page.node("#team-detail");
+  assert.equal(detail.hidden, false, "만든 팀이 선택돼 구성원 패널이 열려야 한다");
+});
+
+test("구성원 추가·제거가 본문(user)으로 나간다 — 경로 조각이 아니다", async () => {
+  const page = loadAdminPage({
+    adminToken: "adm",
+    teams: [
+      { name: "team-n", note: "", builtin: true, createdAt: "t", members: [] },
+      { name: "super", note: "", builtin: true, createdAt: "t", members: [] },
+      { name: "secret", note: "", builtin: false, createdAt: "t", members: ["함부장님"] },
+    ],
+  });
+  await page.settled;
+  page.pickTeamRow(2);
+  assert.equal(page.node("#team-detail").hidden, false);
+
+  // 추가 — 한국어 사용자명이 그대로 본문에 실린다.
+  page.node("#member-user").value = "이교수님";
+  await page.node("#member-add")._on.submit({ preventDefault() {} });
+  await page.settled;
+  const added = page.requests.find((r) => r.method === "POST" && r.path.includes("/teams/secret/members"));
+  assert.ok(added);
+  assert.equal(JSON.parse(added.body).user, "이교수님", "인코딩 사고가 나는 자리는 경로다 — 본문이어야 한다");
+  assert.match(page.status(), /추가됨/);
+
+  // 제거 — 명단의 버튼이 DELETE 를 만든다.
+  const removeBtn = page.node("#member-list").children[0]?.children?.[1];
+  assert.ok(removeBtn, "구성원 줄에 제거 버튼이 있어야 한다");
+  await removeBtn._on.click();
+  await page.settled;
+  const removed = page.requests.find((r) => r.method === "DELETE" && r.path.includes("/teams/secret/members"));
+  assert.ok(removed);
+});
+
+test("기본팀을 골라도 구성원 패널은 열리지 않는다 — 넣고 뺄 것이 없다", async () => {
+  const page = loadAdminPage({ adminToken: "adm" });
+  await page.settled;
+  page.pickTeamRow(0); // team-n
+  assert.equal(page.node("#team-detail").hidden, true);
+});
+
+test("0.13.0 이전 백엔드에서는 팀 구획만 비고 나머지는 돈다 — 404 가 화면을 울리지 않는다", async () => {
+  const page = loadAdminPage({
+    adminToken: "adm", teamsMissing: true,
+    tokens: [{ id: 1, user: "kim", note: "", token: "tok_1", createdAt: "2026-08-14T00:00:00.000Z", revokedAt: null }],
+  });
+  await page.settled;
+  assert.equal(page.node("#team-list tbody").children.length, 0);
+  assert.equal(page.node("#token-list tbody").children.length, 1, "토큰 구획은 멀쩡해야 한다");
+  assert.equal(page.status().includes("404"), false, "낡음의 안내는 판 번호가 한다 — 에러 도배가 아니라");
+});

@@ -28,6 +28,7 @@ function toEntry(row) {
     action: row.action,
     memoId: row.memo_id,
     commentId: row.comment_id,
+    team: row.team,
     summary: row.summary,
     // 저장은 문자열이지만 소비자에게는 객체로 준다 — 읽는 쪽이 또 파싱하지 않게.
     before: row.before ? JSON.parse(row.before) : null,
@@ -69,11 +70,11 @@ export class AuditStore {
     ensureSchema(db);
   }
 
-  record({ action, actor = "", memoId = null, commentId = null, summary = "", before = null, after = null }) {
+  record({ action, actor = "", memoId = null, commentId = null, team = "team-n", summary = "", before = null, after = null }) {
     this.db
-      .prepare("INSERT INTO audit (at, actor, action, memo_id, comment_id, summary, before, after) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .prepare("INSERT INTO audit (at, actor, action, memo_id, comment_id, team, summary, before, after) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .run(
-        new Date().toISOString(), actor, action, memoId, commentId, summary,
+        new Date().toISOString(), actor, action, memoId, commentId, team, summary,
         before === null ? "" : JSON.stringify(before),
         after === null ? "" : JSON.stringify(after),
       );
@@ -83,16 +84,23 @@ export class AuditStore {
    * 한 메모의 이력, 사용자에게 보이는 만큼(내용 없이). **메모가 이미 지워졌어도 답한다** —
    * "그 메모 어디 갔나"가 이 축이 존재하는 이유라, 여기서 404 를 내면 물어볼 곳이 없어진다.
    */
-  historyFor(memoId, { limit = AUDIT_LIMIT.default, offset = 0 } = {}) {
-    const { total, entries } = this.list({ memoId, limit, offset });
+  // teams 는 보는 사람의 가시 팀이다(null = 전부). **줄 단위로** 거른다 — 글이 팀을 옮겨
+  // 다녔으면 각 사건은 그 사건이 일어난 팀의 구성원에게만 보인다. 메모가 지워진 뒤에는
+  // 이 필터가 유일한 문이다(메모 행이 없어 팀을 물어볼 곳이 이력뿐이다).
+  historyFor(memoId, { limit = AUDIT_LIMIT.default, offset = 0, teams = null } = {}) {
+    const { total, entries } = this.list({ memoId, limit, offset, teams });
     return { total, history: entries.map(toPublicEntry) };
   }
 
   /** 최신순. `total` 을 같이 주므로 잘렸는지는 소비자가 안다(보드 목록과 같은 규약). */
-  list({ memoId = null, action = "", actor = "", limit = AUDIT_LIMIT.default, offset = 0 } = {}) {
+  list({ memoId = null, action = "", actor = "", limit = AUDIT_LIMIT.default, offset = 0, teams = null } = {}) {
     const where = [];
     const params = [];
     if (memoId !== null) { where.push("memo_id = ?"); params.push(memoId); }
+    if (teams !== null) {
+      if (teams.length === 0) where.push("1 = 0");
+      else { where.push(`team IN (${teams.map(() => "?").join(", ")})`); params.push(...teams); }
+    }
     if (action) { where.push("action = ?"); params.push(action); }
     if (actor) { where.push("actor = ?"); params.push(actor); }
     const clause = where.length ? ` WHERE ${where.join(" AND ")}` : "";

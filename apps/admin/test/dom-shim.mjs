@@ -106,12 +106,41 @@ function makeSelect(options) {
 
 // 경로별 응답. 실제 백엔드의 모양만 맞춘다(version·tokens·memos).
 // 요청은 전부 기록한다 — "몇 번 나갔는가"가 검사할 값인 경우가 있다(중복 발급).
-function makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTotal }) {
+function makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTotal, teams, teamsMissing }) {
   return async (url, options = {}) => {
     const path = String(url);
     const method = options.method || "GET";
     requests.push({ method, path, body: options.body });
     if (fail) throw new Error("network down");
+
+    // 팀 축. teamsMissing 은 0.13.0 이전 백엔드다 — 이 경로만 404 이고 나머지는 멀쩡하다.
+    if (path.includes("/admin/teams")) {
+      if (teamsMissing) return { ok: false, status: 404, json: async () => ({ error: "No such route.", code: undefined }) };
+      const member = path.match(/\/admin\/teams\/([a-z0-9_-]+)\/members$/);
+      if (member) {
+        const team = teams.find((t) => t.name === member[1]);
+        if (!team) return { ok: false, status: 404, json: async () => ({ error: "No such team.", code: "team_not_found" }) };
+        const { user } = JSON.parse(options.body || "{}");
+        if (method === "POST") {
+          const added = !team.members.includes(user);
+          if (added) team.members.push(user);
+          return { ok: true, status: 200, json: async () => ({ added, team: team.name, members: [...team.members] }) };
+        }
+        if (method === "DELETE") {
+          const removed = team.members.includes(user);
+          team.members = team.members.filter((u) => u !== user);
+          return { ok: true, status: 200, json: async () => ({ removed, team: team.name, members: [...team.members] }) };
+        }
+      }
+      if (method === "POST") {
+        const b = JSON.parse(options.body || "{}");
+        const made = { name: b.name, note: b.note || "", builtin: false, createdAt: "2026-08-17T00:00:00.000Z", members: [] };
+        teams.push(made);
+        return { ok: true, status: 201, json: async () => ({ team: made }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ count: teams.length, teams }) };
+    }
+
     if (method === "POST" && path.includes("/admin/tokens")) {
       const issued = { id: 99, user: "new", note: "", token: "tok_new", createdAt: "2026-08-14T00:00:00.000Z", revokedAt: null };
       return { ok: true, status: 201, json: async () => ({ token: issued }) };
@@ -138,6 +167,12 @@ export function loadAdminPage({
   // "검사는 통과하는데 화면에서는 죽는" 자리가 생긴다 — 복사 버튼이 정확히 그랬다.
   clipboard = false, execCommand = true, boardUrl = "http://board.example/memo",
   tokens = [], memos = [], boardTotal = null, adminToken = "",
+  // 내장 둘은 실제 서버가 늘 갖고 있는 모양 그대로다. 검사가 다른 팀을 원하면 얹는다.
+  teams = [
+    { name: "team-n", note: "기본팀 — 모든 사용자가 소속", builtin: true, createdAt: "t", members: [] },
+    { name: "super", note: "전 팀 보기·쓰기", builtin: true, createdAt: "t", members: [] },
+  ],
+  teamsMissing = false,
 } = {}) {
   const store = new Map(storedTz ? [["baro-memo-tz", storedTz]] : []);
   if (storedSort) store.set("baro-memo-sort", storedSort);
@@ -222,7 +257,7 @@ export function loadAdminPage({
       setItem: (k, v) => store.set(k, String(v)),
       removeItem: (k) => store.delete(k),
     },
-    fetch: makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTotal }),
+    fetch: makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTotal, teams, teamsMissing }),
     // 보안 컨텍스트가 아니면 navigator.clipboard 는 **속성 자체가 없다**. undefined 를 넣어
     // 두는 것과 같지만, 실제 브라우저의 모양을 그대로 흉내 낸다.
     navigator: clipboard ? { clipboard: { writeText: async (t) => { copied.push(t); } } } : {},
@@ -244,6 +279,7 @@ export function loadAdminPage({
     // 리스트에서 한 줄 고르기 — 액션(복사·폐기)은 고른 뒤에만 의미가 있다.
     pickTokenRow: (i = 0) => sandbox.document.querySelector("#token-list tbody").children[i]._on.click(),
     pickMemoRow: (i = 0) => sandbox.document.querySelector("#memo-list tbody").children[i]._on.click(),
+    pickTeamRow: (i = 0) => sandbox.document.querySelector("#team-list tbody").children[i]._on.click(),
     dialog, inviteDialog, inviteLang, memoSort,
   };
 }

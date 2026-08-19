@@ -14,14 +14,23 @@ import { json } from "../core/http.mjs";
 import { presentedToken } from "../memo/routes.mjs";
 
 export function createAuthRoutes(ctx) {
-  const { verdict } = ctx;
+  const { verdict, teamStore = null } = ctx;
 
   return async function handleAuth(method, pathname, query, body, headers = {}) {
     if (pathname !== "/api/auth/whoami") return null;
     if (method !== "GET") return json(405, { error: "Method not supported on this path.", method, pathname });
 
     const v = verdict(presentedToken(headers));
-    if (v.ok) return json(200, { user: v.user, admin: v.admin });
+    if (v.ok) {
+      // teams: 이 토큰으로 **쓸 수 있는 팀**이고, GET /api/teams 가 이름을 주는 목록과 같은
+      // 집합이다. 소속 표(teamsOf)를 그대로 쓰면 super 구성원이 어긋난다 — 그 사람의 소속
+      // 행은 두 개인데 실제로는 모든 팀에 쓸 수 있어서, 이 값을 믿는 에이전트가 자기 권한을
+      // 실제보다 좁게 안다. 관리자 토큰은 사람이 없으므로 null("전부").
+      const teams = teamStore
+        ? (v.user === null ? null : (teamStore.visibleTeams(v.user) ?? teamStore.list().map((t) => t.name)))
+        : undefined;
+      return json(200, { user: v.user, admin: v.admin, ...(teams !== undefined ? { teams } : {}) });
+    }
     return json(v.status, { error: v.error, code: v.code, retryable: false });
   };
 }

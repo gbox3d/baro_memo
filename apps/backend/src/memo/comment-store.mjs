@@ -57,10 +57,13 @@ export class CommentStore {
   remove(id, user = "") {
     const comment = this.get(id);
     if (!comment) return false;
+    // 이력의 가시성은 팀을 따른다 — 댓글 삭제도 그 메모가 살던 팀의 사건이다. 메모가 이미
+    // 지워진 뒤라면(cascade 직전의 경합) 기본팀으로 남는다.
+    const memoTeam = this.db.prepare("SELECT team FROM memo WHERE id = ?").get(comment.memoId)?.team ?? "team-n";
     const deleted = this.db.prepare("DELETE FROM comment WHERE id = ?").run(id).changes > 0;
     if (deleted) {
       this.audit.record({
-        action: "comment_delete", actor: user, memoId: comment.memoId, commentId: id,
+        action: "comment_delete", actor: user, memoId: comment.memoId, commentId: id, team: memoTeam,
         summary: `deleted a comment by ${comment.user || "(unknown)"}`,
         before: comment,
       });

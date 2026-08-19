@@ -24,6 +24,7 @@ import { CommentStore } from "./memo/comment-store.mjs";
 import { VoteStore } from "./memo/vote-store.mjs";
 import { AuditStore } from "./memo/audit-store.mjs";
 import { TokenStore } from "./auth/token-store.mjs";
+import { TeamStore } from "./auth/team-store.mjs";
 import { createVerdict } from "./auth/verdict.mjs";
 import { createMemoRoutes } from "./memo/routes.mjs";
 import { createAdminRoutes } from "./admin/routes.mjs";
@@ -63,6 +64,7 @@ const commentStore = new CommentStore(db);
 const voteStore = new VoteStore(db);
 const auditStore = new AuditStore(db);
 const tokenStore = new TokenStore(db);
+const teamStore = new TeamStore(db);
 // 정체성 판정의 정본. 게시판의 whoami 도, 아티팩트 저장소도 이 함수 하나를 부른다 — 판정이
 // 두 벌이면 폐기가 한쪽에만 닿는 날이 온다.
 const verdict = createVerdict({ tokenStore, adminToken: ADMIN_TOKEN });
@@ -84,9 +86,9 @@ const files = await createFilesMount({
 wireReaper(files.store);
 
 const routers = [
-  createMemoRoutes({ memoStore, tokenStore, commentStore, voteStore, auditStore, adminToken: ADMIN_TOKEN }),
-  createAdminRoutes({ tokenStore, auditStore, adminToken: ADMIN_TOKEN }),
-  createAuthRoutes({ verdict }),
+  createMemoRoutes({ memoStore, tokenStore, commentStore, teamStore, voteStore, auditStore, adminToken: ADMIN_TOKEN }),
+  createAdminRoutes({ tokenStore, teamStore, auditStore, adminToken: ADMIN_TOKEN }),
+  createAuthRoutes({ verdict, teamStore }),
 ];
 
 async function handle(method, pathname, query, body, headers) {

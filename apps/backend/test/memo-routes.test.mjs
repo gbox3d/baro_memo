@@ -14,6 +14,7 @@ import { CommentStore } from "../src/memo/comment-store.mjs";
 import { VoteStore } from "../src/memo/vote-store.mjs";
 import { AuditStore } from "../src/memo/audit-store.mjs";
 import { TokenStore } from "../src/auth/token-store.mjs";
+import { TeamStore } from "../src/auth/team-store.mjs";
 import { createMemoRoutes } from "../src/memo/routes.mjs";
 
 // 라우터 하나만 세운다. users 에 적은 사용자마다 토큰을 발급해 돌려준다.
@@ -28,13 +29,14 @@ function rig(users = ["kim"], { adminToken = "adm_test_value" } = {}) {
   const tokens = Object.fromEntries(users.map((u) => [u, tokenStore.issue({ user: u }).token]));
   const voteStore = new VoteStore(db);
   const auditStore = new AuditStore(db);
-  const router = createMemoRoutes({ memoStore, tokenStore, commentStore, voteStore, auditStore, adminToken });
+  const teamStore = new TeamStore(db);
+  const router = createMemoRoutes({ memoStore, tokenStore, commentStore, teamStore, voteStore, auditStore, adminToken });
   // 읽기도 토큰이 필요해졌으므로 기본 헤더가 있다. 문턱 자체를 보는 검사는 `{}` 를 명시해 끈다.
   const reader = users.length ? { "x-memo-token": tokens[users[0]] } : {};
   return {
     handle: (method, path, body = {}, headers = reader) => router(method, path, null, body, headers),
     list: (query = "", headers = reader) => router("GET", "/api/memos", query, {}, headers),
-    adminToken, memoStore, commentStore, voteStore, auditStore, tokenStore, tokens,
+    adminToken, memoStore, commentStore, teamStore, voteStore, auditStore, tokenStore, tokens,
   };
 }
 

@@ -14,9 +14,10 @@ const PAGE = 10;
 const state = {
   tokens: [], memos: [], bodies: new Map(), comments: new Map(), history: new Map(),
   scores: new Map(), invites: new Map(),
+  teams: [],
   boardUrl: null,
   offset: 0, total: 0, sort: "new",
-  selectedToken: null, selectedMemo: null,
+  selectedToken: null, selectedMemo: null, selectedTeam: null,
 };
 
 // 관리자 토큰은 localStorage 에 둔다 — 이 페이지의 사용자는 운영자 한 사람이고,
@@ -513,6 +514,115 @@ async function loadTokens() {
   renderTokens();
 }
 
+// ---- 팀 ---------------------------------------------------------------------------------
+//
+// 소속은 사람(user)에 걸린다 — 토큰이 아니다. 폐기·재발급이 팀을 건드리면 안 되기 때문이고,
+// 그래서 이 구획의 명단은 토큰 표와 따로 논다(같은 이름이 양쪽에 보이는 것이 정상이다).
+// 내장 둘: team-n 은 모두의 기본팀(구성원 관리가 없다), super 는 전 팀 보기·쓰기.
+
+function renderTeams() {
+  const tbody = $("#team-list tbody");
+  tbody.replaceChildren(...state.teams.map((t) => {
+    const tr = document.createElement("tr");
+    tr.className = state.selectedTeam === t.name ? "selected" : "";
+    tr.innerHTML = `
+      <td class="mono">${esc(t.name)}${t.builtin ? " ✦" : ""}</td>
+      <td>${esc(t.note) || "—"}</td>
+      <td>${t.name === "team-n" ? "전원" : t.members.length}</td>`;
+    tr.addEventListener("click", () => selectTeam(t.name));
+    return tr;
+  }));
+
+  const detail = $("#team-detail");
+  const sel = state.teams.find((t) => t.name === state.selectedTeam);
+  // 기본팀은 구성원 관리가 없다 — 전원이 암묵 소속이라 넣고 뺄 것이 없다.
+  detail.hidden = !sel || sel.name === "team-n";
+  if (detail.hidden) return;
+
+  // 알려진 사용자 제안 — 토큰 발급 이력의 이름들. 자유 입력도 그대로 받는다.
+  $("#known-users").replaceChildren(...[...new Set(state.tokens.map((t) => t.user))].map((u) => {
+    const o = document.createElement("option");
+    o.value = u;
+    return o;
+  }));
+
+  $("#member-list").replaceChildren(...sel.members.map((u) => {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = u;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "danger";
+    btn.textContent = "제거";
+    btn.title = `${u} 를 ${sel.name} 에서 제거`;
+    btn.addEventListener("click", async () => {
+      if (btn.disabled) return;
+      btn.disabled = true;
+      try {
+        await call(`admin/teams/${sel.name}/members`, { method: "DELETE", body: { user: u } });
+        await loadTeams();
+        say(`${sel.name} 에서 ${u} 제거됨`);
+      } catch (err) { sayError(err); }
+      finally { btn.disabled = false; }
+    });
+    li.append(name, btn);
+    return li;
+  }));
+}
+
+function selectTeam(name) {
+  state.selectedTeam = state.selectedTeam === name ? null : name;
+  renderTeams();
+}
+
+$("#team-create").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("#team-submit");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    const { team } = await call("admin/teams", {
+      method: "POST",
+      body: { name: $("#team-name").value.trim(), note: $("#team-note").value },
+    });
+    $("#team-create").reset();
+    state.selectedTeam = team.name; // 만들자마자 사람을 넣는 것이 다음 동작이다
+    await loadTeams();
+    say(`팀 ${team.name} 생성됨`);
+  } catch (err) { sayError(err); }
+  finally { btn.disabled = false; }
+});
+
+$("#member-add").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sel = state.teams.find((t) => t.name === state.selectedTeam);
+  if (!sel) return;
+  const btn = $("#member-submit");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    const user = $("#member-user").value.trim();
+    const { added } = await call(`admin/teams/${sel.name}/members`, { method: "POST", body: { user } });
+    $("#member-add").reset();
+    await loadTeams();
+    // 멱등의 두 답을 구분해 준다 — "이미 있었다"가 에러로 보이면 운영자가 상태를 의심한다.
+    say(added ? `${sel.name} 에 ${user} 추가됨` : `${user} 는 이미 ${sel.name} 소속`);
+  } catch (err) { sayError(err); }
+  finally { btn.disabled = false; }
+});
+
+async function loadTeams() {
+  if (!tokenInput.value.trim()) { state.teams = []; renderTeams(); return; }
+  try {
+    state.teams = (await call("admin/teams")).teams;
+  } catch (err) {
+    state.teams = [];
+    // 낡은 백엔드(0.13.0 이전)는 이 경로가 없다 — 팀 구획만 비고 나머지는 돌아야 한다.
+    if (err.status !== 404) sayError(err);
+  }
+  renderTeams();
+}
+
 // ---- 보드 (읽기 전용) ------------------------------------------------------------------
 
 function renderMemos() {
@@ -545,7 +655,9 @@ function renderMemos() {
   if (!sel) { closeMemo(); return; }
   $("#memo-dialog-title").textContent = `#${sel.id} · ${sel.status} · ${sel.title || "(제목 없음)"}`
     + (sel.commentCount ? ` · 댓글 ${sel.commentCount}` : "")
-    + (sel.score ? ` · 중요도 ${sel.score}` : "");
+    + (sel.score ? ` · 중요도 ${sel.score}` : "")
+    // 기본팀은 적지 않는다 — 전부에 붙는 라벨은 정보가 아니다. 팀이 있는 글만 그 사실이 보인다.
+    + (sel.team && sel.team !== "team-n" ? ` · 팀 ${sel.team}` : "");
   // 전문이 아직 없으면 미리보기로 자리를 채운다 — 빈 칸은 "본문이 없다"로 읽힌다.
   const full = state.bodies.get(sel.id);
   const text = full ?? `${sel.bodyPreview}${sel.bodyLength > sel.bodyPreview.length ? "…" : ""}`;
@@ -791,7 +903,7 @@ async function loadVersion() {
 }
 
 async function refresh() {
-  await Promise.all([loadVersion(), loadTokens(), loadMemos()]);
+  await Promise.all([loadVersion(), loadTokens(), loadTeams(), loadMemos()]);
 }
 
 refresh();

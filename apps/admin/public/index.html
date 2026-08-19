@@ -50,6 +50,36 @@
     </table>
   </section>
 
+  <section id="teams">
+    <h2>팀</h2>
+
+    <!-- 속성창: 생성 폼 + 선택된 팀의 구성원 관리. 리스트에는 액션을 두지 않는다.
+         소속은 사람(user)에 걸린다 — 토큰을 폐기·재발급해도 팀은 그대로다. -->
+    <div class="panel">
+      <form id="team-create">
+        <input id="team-name" placeholder="팀 이름 (소문자 슬러그)" autocomplete="off"
+               pattern="[a-z0-9][a-z0-9_-]{0,31}" required>
+        <input id="team-note" placeholder="비고 (선택)" autocomplete="off">
+        <button id="team-submit" type="submit">만들기</button>
+      </form>
+      <div id="team-detail" class="detail" hidden>
+        <form id="member-add">
+          <!-- 알려진 사용자(토큰 발급 이력)를 제안하되 자유 입력도 받는다 — 토큰보다 먼저
+               팀에 넣어 두는 순서도 정상이다. -->
+          <input id="member-user" placeholder="사용자명" autocomplete="off" list="known-users" required>
+          <datalist id="known-users"></datalist>
+          <button id="member-submit" type="submit">추가</button>
+        </form>
+        <ul id="member-list"></ul>
+      </div>
+    </div>
+
+    <table id="team-list">
+      <thead><tr><th>팀</th><th>비고</th><th>인원</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
   <section id="memos">
     <h2>보드</h2>
 

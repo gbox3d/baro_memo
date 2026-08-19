@@ -13,6 +13,7 @@
 import { fail, text, toId } from "./fields.mjs";
 import { ensureSchema } from "./schema.mjs";
 import { AuditStore } from "./audit-store.mjs";
+import { DEFAULT_TEAM } from "../auth/team-store.mjs";
 
 export const MEMO_STATUSES = Object.freeze(["open", "doing", "done"]);
 
@@ -55,6 +56,7 @@ function toMemo(row) {
     author: row.author,
     user: row.user,
     updatedBy: row.updated_by,
+    team: row.team,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     // 댓글은 **개수만** 싣는다. 목록이든 한 건이든, 댓글 본문은 그 메모의 댓글 경로로 받는다 —
@@ -85,6 +87,7 @@ function toSummary(row) {
     author: row.author,
     user: row.user,
     updatedBy: row.updated_by,
+    team: row.team,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     commentCount: row.comment_count ?? 0,
@@ -171,7 +174,7 @@ export class MemoStore {
     const {
       status = null, q = "", author = "", user = "",
       full = false, limit = LIST_LIMIT.default, offset = 0,
-      sort = "new", viewer = "",
+      sort = "new", viewer = "", teams = null,
     } = options;
 
     // q 가 있으면 두 색인(메모·댓글)의 적중을 합쳐 메모에 붙인다. 칼럼은 전부 memo. 로 못
@@ -189,12 +192,19 @@ export class MemoStore {
     // user 는 서버가 토큰에서 찍은 값이라 부분 일치가 아니라 정확 일치다 — "kim" 이 "kimura" 를
     // 끌고 오면 귀속이 무너진다.
     if (user) { where.push("memo.user = ?"); params.push(user); }
+    // 팀 가시성 — **null 만이 "전부"다**(super·운영자). 배열이면 그 안의 팀만 존재한다.
+    // 빈 배열은 "아무것도 안 보인다"로 정직하게 처리한다(1=0) — 조용히 전부를 돌려주는
+    // 것이 이 필터에서 가장 나쁜 실패다.
+    if (teams !== null) {
+      if (teams.length === 0) where.push("1 = 0");
+      else { where.push(`memo.team IN (${teams.map(() => "?").join(", ")})`); params.push(...teams); }
+    }
     const clause = where.length ? ` WHERE ${where.join(" AND ")}` : "";
 
     const total = this.db.prepare(`SELECT COUNT(*) AS n FROM ${from}${clause}`).get(...params).n;
     // 요약일 때는 body 를 SELECT 하지 않는다. 20000자를 읽어다 버리면 아낀 것은 대역폭뿐이다.
     const columns = full ? "memo.*" : `
-      memo.id, memo.title, memo.status, memo.author, memo.user, memo.updated_by,
+      memo.id, memo.title, memo.status, memo.author, memo.user, memo.updated_by, memo.team,
       memo.created_at, memo.updated_at,
       substr(memo.body, 1, ${PREVIEW_CHARS}) AS body_preview, length(memo.body) AS body_length`;
     // 보는 사람이 없으면(관리자 토큰으로 읽는 경우) 물음표째 뺀다 — 빈 문자열을 넘기면
@@ -245,23 +255,27 @@ export class MemoStore {
   }
 
   // user 는 본문이 아니라 두 번째 인자다 — 라우터가 토큰에서 역산한 값만 들어온다.
-  create(input = {}, user = "") {
+  // team 도 같다: 존재·소속 검증을 통과한 값만 라우터가 넘긴다. 본문의 team 을 여기서 직접
+  // 읽으면 검증이 두 곳으로 갈라진다.
+  create(input = {}, user = "", team = DEFAULT_TEAM) {
     const body = text(input.body, "body");
     if (!body) throw fail("empty_body", "body cannot be empty.");
     const now = new Date().toISOString();
     const { lastInsertRowid } = this.db
-      .prepare("INSERT INTO memo (title, body, status, author, user, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(text(input.title, "title"), body, status(input.status), text(input.author, "author"), user, user, now, now);
+      .prepare("INSERT INTO memo (title, body, status, author, user, updated_by, team, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(text(input.title, "title"), body, status(input.status), text(input.author, "author"), user, user, team, now, now);
     // 쓴 사람이 곧 이 응답을 받는 사람이다 — myScore 를 그 사람 기준으로 채운다.
     return this.get(Number(lastInsertRowid), user);
   }
 
   // 부분 갱신. 보내지 않은 필드는 건드리지 않는다. updated_by 는 매번 토큰의 사용자로 찍힌다.
+  // patch.team 은 라우터가 목적지 소속까지 검증한 값이다(본문의 날값이 아니다).
   update(id, patch = {}, user = "") {
     const before = this.get(id);
     if (!before) return null;
     const sets = [];
     const values = [];
+    if (patch.team !== undefined) { sets.push("team = ?"); values.push(String(patch.team)); }
     if (patch.title !== undefined) { sets.push("title = ?"); values.push(text(patch.title, "title")); }
     if (patch.body !== undefined) {
       const body = text(patch.body, "body");
@@ -279,10 +293,15 @@ export class MemoStore {
 
     // 바뀐 칸만 남긴다. 안 바뀐 칸까지 실으면 이력을 읽는 쪽이 무엇이 바뀌었는지 다시
     // 비교해야 하고, 같은 값으로 덮은 PATCH 는 애초에 이력이 아니다.
-    const changed = ["title", "body", "status", "author"].filter((f) => before[f] !== after[f]);
+    const changed = ["title", "body", "status", "author", "team"].filter((f) => before[f] !== after[f]);
     if (changed.length) {
+      // 이력의 팀은 **도착지**(after)다. 옮기기 전 팀으로 찍으면 team-n → 비밀 팀 이동이
+      // 전원에게 보이는 이력으로 남아 "그 글은 아직 있고, 누가, 어딘가로 옮겼다"를 말해 준다 —
+      // 안 보이는 글이 없는 글과 구분되지 않아야 한다는 이 축의 규칙이 바로 거기서 깨진다.
+      // (반대 방향인 비밀 → team-n 은 도착지가 공개이므로 그대로 보인다: 공개한 사실은
+      //  공개돼도 된다. 팀이 안 바뀐 수정은 before.team === after.team 이라 차이가 없다.)
       this.audit.record({
-        action: "memo_update", actor: user, memoId: id,
+        action: "memo_update", actor: user, memoId: id, team: after.team,
         summary: `updated ${changed.join(", ")}`,
         before: Object.fromEntries(changed.map((f) => [f, before[f]])),
         after: Object.fromEntries(changed.map((f) => [f, after[f]])),
@@ -309,7 +328,7 @@ export class MemoStore {
       // votes 가 사람과 함께 그대로 들고 있으므로 잃는 사실도 없다.
       const { myScore, ...archived } = memo;
       this.audit.record({
-        action: "memo_delete", actor: user, memoId: id,
+        action: "memo_delete", actor: user, memoId: id, team: memo.team,
         summary: `deleted "${memo.title || "(no title)"}"`
           + (comments.length ? ` with ${comments.length} comment(s)` : "")
           + (votes.length ? ` and ${memo.score} point(s) from ${votes.length} voter(s)` : ""),

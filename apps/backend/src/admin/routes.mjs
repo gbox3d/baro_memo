@@ -52,12 +52,13 @@ function parseAuditQuery(query) {
 }
 
 export function createAdminRoutes(ctx) {
-  const { tokenStore, auditStore = null, adminToken = "" } = ctx;
+  const { tokenStore, teamStore = null, auditStore = null, adminToken = "" } = ctx;
 
   // query 는 이 축에서 쓰지 않는다 — 서명은 라우터 규약(server.mjs)이라 자리를 지킨다.
   return async function handleAdmin(method, pathname, query = null, body = {}, headers = {}) {
     const mine = pathname === "/api/admin/tokens" || pathname.startsWith("/api/admin/tokens/")
-      || pathname === "/api/admin/audit";
+      || pathname === "/api/admin/audit"
+      || pathname === "/api/admin/teams" || pathname.startsWith("/api/admin/teams/");
     if (!mine) return null;
 
     const expected = String(adminToken || "").trim();
@@ -84,6 +85,48 @@ export function createAdminRoutes(ctx) {
         const { total, entries } = auditStore.list(options);
         return json(200, { count: entries.length, total, limit: options.limit, offset: options.offset, entries });
       } catch (error) { return badRequest(error); }
+    }
+
+    // ---- 팀 — 만들고, 사람을 넣고 뺀다 ---------------------------------------------------
+    //
+    // 구성원 명단이 실리는 곳은 이 축뿐이다. 팀의 존재도, 누가 어디 속하는지도 정보라서
+    // 사용자 축(/api/teams)은 자기에게 보이는 팀 이름까지만 준다.
+    // 구성원 지정이 경로가 아니라 **본문**인 이유: user 는 한국어일 수 있고(실제로 있다),
+    // 경로 조각의 인코딩 실수는 "없는 사람을 추가"로 조용히 성공해 버린다.
+    if (pathname === "/api/admin/teams" || pathname.startsWith("/api/admin/teams/")) {
+      if (!teamStore) return json(503, { error: "Teams are not wired on this deployment.", code: "teams_unavailable" });
+
+      if (pathname === "/api/admin/teams") {
+        if (method === "GET") {
+          const teams = teamStore.list();
+          return json(200, { count: teams.length, teams });
+        }
+        if (method === "POST") {
+          try { return json(201, { team: teamStore.create(body) }); }
+          catch (error) { return badRequest(error); }
+        }
+        return json(405, { error: "Method not supported on this path.", method, pathname });
+      }
+
+      const members = pathname.match(/^\/api\/admin\/teams\/([a-z0-9][a-z0-9_-]{0,31})\/members$/);
+      if (members) {
+        const team = members[1];
+        try {
+          if (method === "POST") {
+            const added = teamStore.addMember(team, body?.user);
+            return json(200, { added, team, members: teamStore.membersOf(team) });
+          }
+          if (method === "DELETE") {
+            const removed = teamStore.removeMember(team, body?.user);
+            return json(200, { removed, team, members: teamStore.membersOf(team) });
+          }
+        } catch (error) {
+          if (error.code === "team_not_found") return json(404, { error: error.message, code: error.code });
+          return badRequest(error);
+        }
+        return json(405, { error: "Method not supported on this path.", method, pathname });
+      }
+      return json(404, { error: "No such admin route.", code: "admin_route_not_found", pathname });
     }
 
     if (method === "GET" && pathname === "/api/admin/tokens") {

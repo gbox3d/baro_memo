@@ -15,9 +15,33 @@ const TABLES = `
     author     TEXT NOT NULL DEFAULT '',
     user       TEXT NOT NULL DEFAULT '',
     updated_by TEXT NOT NULL DEFAULT '',
+    team       TEXT NOT NULL DEFAULT 'team-n',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+  -- memo_by_team 색인은 여기 없다 — ensureSchema 가 team 열 이관 **뒤에** 세운다.
+  -- 여기 두면 0.13.0 이전 DB(열 없음)에서 CREATE INDEX 가 죽는다.
+
+  -- 팀 — 보기·쓰기의 격리 단위 (0.13.0). 분류 축이 아니다: 이 보드의 찾기 수단은 여전히
+  -- 검색 하나이고, 팀은 **기밀**(비밀 프로젝트를 일반 구성원과 격리)을 위해서만 존재한다.
+  -- 내장 둘: 'team-n'(기본팀 — 모든 사용자가 암묵 소속, 행 없이도 소속이다)과
+  -- 'super'(전 팀 보기·쓰기). 내장 행은 TeamStore 가 심는다.
+  CREATE TABLE IF NOT EXISTS team (
+    name       TEXT PRIMARY KEY,
+    note       TEXT NOT NULL DEFAULT '',
+    builtin    INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+
+  -- 소속은 **사람(user 문자열)** 에 걸린다, 토큰에 걸리지 않는다 — 한 사람의 토큰이 여럿이고
+  -- (기기마다 하나), 폐기·재발급이 소속을 건드리면 안 되기 때문이다.
+  CREATE TABLE IF NOT EXISTS team_member (
+    team     TEXT NOT NULL REFERENCES team(name),
+    user     TEXT NOT NULL,
+    added_at TEXT NOT NULL,
+    UNIQUE (team, user)
+  );
+  CREATE INDEX IF NOT EXISTS member_by_user ON team_member(user);
 
   -- 댓글은 메모 본문에 이어 붙이지 않는다. 본문은 그 메모의 진술이고 댓글은 남의 말이라,
   -- 섞으면 누가 무엇을 썼는지 되물을 수 없다(그 추적이 이 서비스가 분리된 이유다).
@@ -68,12 +92,22 @@ const TABLES = `
     action     TEXT NOT NULL,              -- memo_update · memo_delete · comment_delete
     memo_id    INTEGER,
     comment_id INTEGER,
+    team       TEXT NOT NULL DEFAULT 'team-n',  -- 사건 당시 메모의 팀. 메모가 지워진 뒤에도
+                                                -- 이력의 가시성을 이 값이 가른다
     summary    TEXT NOT NULL DEFAULT '',   -- 사람이 읽는 한 줄 (무엇이 바뀌었나)
     before     TEXT NOT NULL DEFAULT '',   -- JSON: 사라지거나 덮인 값
     after      TEXT NOT NULL DEFAULT ''    -- JSON: 새 값 (수정일 때만)
   );
   CREATE INDEX IF NOT EXISTS audit_by_memo ON audit(memo_id, id);
 `;
+
+// 이미 만들어진 DB 에 열을 얹는다. CREATE TABLE IF NOT EXISTS 는 **있는 테이블을 고치지
+// 않으므로**, 0.13.0 이전의 운영 DB 는 이 경로로만 team 열을 얻는다. 기본값 'team-n' 이
+// 이관 정책 그 자체다 — 팀이 생기기 전의 모든 글은 기본팀의 글이다.
+function ensureColumn(db, table, column, ddl) {
+  const has = db.prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`).get(table, column);
+  if (!has) db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
 
 // 전문 검색. 이 보드는 프로젝트를 가로질러 읽히는 물건이라, 찾는 쪽은 저장소도 제목도 모르고
 // **증상 문자열**(`X-Forwarded-Prefix`, `no_tokens_issued`) 하나만 안다.
@@ -132,6 +166,11 @@ function ensureIndex(db, name, ddl) {
 /** 두 스토어 어느 쪽을 만들어도 같은 스키마가 선다. 여러 번 불러도 안전하다. */
 export function ensureSchema(db) {
   db.exec(TABLES);
+  // 열 이관은 색인 생성보다 먼저다 — memo_by_team 색인이 team 열을 요구한다. (신규 DB 는
+  // TABLES 가 열을 갖고 만들므로 이 둘은 아무 일도 하지 않는다.)
+  ensureColumn(db, "memo", "team", "team TEXT NOT NULL DEFAULT 'team-n'");
+  ensureColumn(db, "audit", "team", "team TEXT NOT NULL DEFAULT 'team-n'");
+  db.exec("CREATE INDEX IF NOT EXISTS memo_by_team ON memo(team, id)");
   ensureIndex(db, "memo_fts", MEMO_FTS);
   ensureIndex(db, "comment_fts", COMMENT_FTS);
 }
