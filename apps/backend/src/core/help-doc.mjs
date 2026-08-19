@@ -34,13 +34,13 @@ export const AGENT_ROUTES = Object.freeze([
     summary: "Backend's own version" },
 
   { method: "GET", path: "/api/memos", topic: "memo",
-    summary: "Summary index of the board, newest first — {count, total, limit, offset, memos}. No body, just bodyPreview/bodyLength (and commentCount, score, voters, myScore); ?full=1 for real bodies. q is full-text over title+body+comments (words are AND, 3 chars minimum, punctuation is literal) and adds snippet + matchedIn (memo|comment) to each hit. sort=score ranks by importance instead of newest first. Other filters: status (comma list) · author (contains) · user (exact) · limit (≤200, default 50) · offset. Needs a token — reads are not open (any user token, or the admin token)",
+    summary: "Summary index of the board, newest first — {count, total, limit, offset, memos}. No body, just bodyPreview/bodyLength (and commentCount, score, voters, myScore); ?full=1 for real bodies. q is full-text over title+body+comments (words are AND, 3 chars minimum, punctuation is literal) and adds snippet + matchedIn (memo|comment) to each hit. sort=score ranks by importance instead of newest first. team narrows to one of your teams (one you cannot see is 404 team_not_found, exactly like one that does not exist); posts outside your teams are absent from every list, search hit and total. Other filters: status (comma list) · author (contains) · user (exact) · limit (≤200, default 50) · offset. Needs a token — reads are not open (any user token, or the admin token)",
     query: "?status=open,doing&q=&author=&user=&sort=new&team=&limit=50&offset=0&full=0" },
   { method: "POST", path: "/api/memos", topic: "memo",
     summary: "Post to the board. Needs a user token; `user` is stamped from it. team defaults to team-n (the board everyone sees); naming a team you are not a member of is 404 team_not_found",
     body: "{body, title?, status?, author?, team?}" },
   { method: "GET", path: "/api/teams", topic: "memo",
-    summary: "The teams visible to your token — team-n plus your memberships ({count, teams}). Member lists live on the admin surface only" },
+    summary: "The teams your token can read and write ({count, teams}) — team-n plus your memberships, or every team for a super member and for the admin token. Needs a token like every route here. Member lists live on the admin surface only" },
   { method: "GET", path: "/api/memos/:memoId", topic: "memo",
     summary: "One post by id with its comments and its scores — {memo, comments, scores}, or 404 memo_not_found" },
   { method: "PATCH", path: "/api/memos/:memoId", topic: "memo",
@@ -69,7 +69,7 @@ export const AGENT_ROUTES = Object.freeze([
     summary: "Remove one comment. The path must name the post it belongs to, else 404 comment_not_found. Needs a user token" },
 
   { method: "GET", path: "/api/auth/whoami", topic: "tokens",
-    summary: "Resolve the presented token to an identity — {user, admin}. A user token answers {user, admin:false}; the admin token answers {user:null, admin:true} (valid, but nobody to attribute — services must refuse attribution-bearing writes on it). 401/503 mirror the read gate. Built for sibling services (e.g. the artifact store) so tokens are issued in exactly one place; cache answers for a minute or two" },
+    summary: "Resolve the presented token to an identity — {user, admin, teams}. A user token answers {user, admin:false, teams:[...]}; the admin token answers {user:null, admin:true, teams:null} (valid, but nobody to attribute — services must refuse attribution-bearing writes on it). teams is the effective reach: every team for a super member, null meaning all for the admin token. 401/503 mirror the read gate. Built for sibling services (e.g. the artifact store) so tokens are issued in exactly one place; cache answers for a minute or two" },
 
   { method: "GET", path: "/api/admin/tokens", topic: "tokens",
     summary: "Every issued token with its user and revocation state. Admin token only" },

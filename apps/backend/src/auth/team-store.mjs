@@ -14,7 +14,7 @@
 //   4. **내장 팀 둘은 지울 수 없고, 팀 삭제 경로 자체가 없다.** 팀을 지우면 그 팀의 글이
 //      고아가 되거나(안 보임) 노출되거나(기본팀으로 승격) 둘 중 하나인데, 양쪽 다 사고다.
 //      필요해지는 날 글의 거취와 함께 설계한다.
-import { fail, text } from "../memo/fields.mjs";
+import { fail } from "../memo/fields.mjs";
 import { ensureSchema } from "../memo/schema.mjs";
 
 export const DEFAULT_TEAM = "team-n";
@@ -23,6 +23,7 @@ export const SUPER_TEAM = "super";
 // 팀 이름은 슬러그다. URL 경로·쿼리에 그대로 실리고 관리자 페이지에서 손으로 치는 값이라,
 // 공백·대문자·유니코드를 받으면 "왜 안 맞지"가 만들어진다.
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const NOTE_MAX = 200;  // 토큰의 note 와 같은 상한 — 같은 자리에 같은 성격의 값이다
 
 function toRecord(row) {
   if (!row) return null;
@@ -59,8 +60,12 @@ export class TeamStore {
       throw fail("invalid_team_name", "team name must match ^[a-z0-9][a-z0-9_-]{0,31}$ — lowercase slug, it travels in URLs.");
     }
     if (this.get(name)) throw fail("team_exists", `Team "${name}" already exists.`);
+    // 상한은 여기서 잰다. memo 의 text() 를 빌려 쓰면 거절 메시지가 남의 칸 이름을 부른다
+    // ("title exceeds the cap") — 고칠 사람이 무엇을 줄여야 하는지 모르게 된다.
+    const note = String(input.note ?? "").trim();
+    if (note.length > NOTE_MAX) throw fail("too_long", `note exceeds the cap (${NOTE_MAX} chars).`);
     this.db.prepare("INSERT INTO team (name, note, builtin, created_at) VALUES (?, ?, 0, ?)")
-      .run(name, text(input.note ?? "", "title"), new Date().toISOString());
+      .run(name, note, new Date().toISOString());
     return { ...this.get(name), members: [] };
   }
 
@@ -86,8 +91,12 @@ export class TeamStore {
   removeMember(team, user) {
     const t = this.get(team);
     if (!t) throw fail("team_not_found", `No such team: "${team}".`);
+    // 넣기와 같은 문턱이다. 빈 값에 200 removed:false 를 주면 운영자는 "그 사람은 원래
+    // 없었다"로 읽는데, 실제로는 이름을 안 보낸 것이다 — 다른 사실이다.
+    const u = String(user || "").trim();
+    if (!u) throw fail("empty_user", "user cannot be empty.");
     return this.db.prepare("DELETE FROM team_member WHERE team = ? AND user = ?")
-      .run(t.name, String(user || "").trim()).changes > 0;
+      .run(t.name, u).changes > 0;
   }
 
   /** 한 사람의 소속 — 기본팀 포함, 이름순. whoami 와 /api/teams 가 이 모양을 내보낸다. */

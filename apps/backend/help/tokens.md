@@ -78,6 +78,12 @@ is the whole lifecycle: there is no expiry, so a token lives until an operator r
 
 ## Teams — who a person is allowed to see
 
+`GET {{BASE}}/api/auth/whoami` also answers `teams`: the list a token may read and write, or
+`null` for the admin token (meaning all). For a `super` member the list is every team, not just
+their two membership rows — the value states effective reach, so an agent reading it does not
+believe its access is narrower than it is.
+
+
 Access to posts is per **team** (see the [memo]({{BASE}}/api/help/memo) topic for how it looks to
 users). The operator manages it here. Four rules:
 
@@ -126,7 +132,11 @@ Retention is unbounded for now: nothing prunes it.
 
 | Code | Status | Meaning |
 |---|---|---|
-| `empty_user` | 400 | issuing without a user name |
+| `empty_user` | 400 | issuing without a user name, or adding/removing a team member without one |
+| `invalid_team_name` | 400 | team name is not a lowercase slug (`^[a-z0-9][a-z0-9_-]{0,31}$`) |
+| `team_exists` | 400 | a team by that name is already there — including the built-in two |
+| `default_team_implicit` | 400 | tried to add a membership row to `team-n`; everyone is in it already |
+| `team_not_found` | 404 | no team by that name |
 | `invalid_field` | 400 | a field was not a string |
 | `too_long` | 400 | over the cap (user 100, note 200) |
 | `token_not_found` | 404 | no token row with that id |

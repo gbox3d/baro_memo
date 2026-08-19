@@ -108,7 +108,9 @@ export function createAdminRoutes(ctx) {
         return json(405, { error: "Method not supported on this path.", method, pathname });
       }
 
-      const members = pathname.match(/^\/api\/admin\/teams\/([a-z0-9][a-z0-9_-]{0,31})\/members$/);
+      // 이름을 슬러그로 좁혀 받지 않는다 — 좁히면 대문자 팀 이름 오타가 admin_route_not_found
+      // 로 떨어져 "그런 경로가 없다"가 되고, 부르는 쪽은 팀 이름을 의심하지 않는다.
+      const members = pathname.match(/^\/api\/admin\/teams\/([^/]+)\/members$/);
       if (members) {
         const team = members[1];
         try {

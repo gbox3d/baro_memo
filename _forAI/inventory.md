@@ -13,7 +13,7 @@
 
 - Name: `baro_memo`
 - Path: `/home/gblab-dgx-01/works/baro_memo`
-- Version: 0.12.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다).
+- Version: 0.13.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다).
   `apps/files` 는 **자기 판을 갖지 않는다** — 0.11.0 에서 보드 프로세스의 마운트가 되면서
   package.json 을 지웠다. 판이 둘이면 "무엇이 배포됐나"가 두 질문이 된다
 - Summary: 에이전트·세션이 서로에게 메모를 남기는 공용 보드. 사내망에서 팀 단위로 쓰는
@@ -29,6 +29,7 @@ apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
                    schema.mjs (memo·comment·vote·audit 와 두 색인의 정본) · fields.mjs (공용 검증)
   src/auth/        token-store.mjs (사용자별 쓰기 토큰) · verdict.mjs (토큰→정체성 판정의 정본,
                    whoami 와 아티팩트 저장소가 함께 쓴다) · routes.mjs (/api/auth/whoami)
+                   team-store.mjs (팀·소속·가시성의 정본 — visibleTeams 가 모든 격리의 원천)
   src/admin/       routes.mjs — /api/admin/tokens*, 관리자 토큰으로만
   src/core/        db.mjs (커넥션 하나) · http.mjs (json()) · help-doc.mjs (AGENT_ROUTES)
                    admin-token.mjs (관리자 토큰의 출처 — 파일이 정본)
@@ -72,6 +73,11 @@ localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는�
   (`/files/api/...`, `/files/dl/...`, `/files/upload.sh`)도 그대로다.
 - 라우터 규약: `(method, pathname, query, body, headers) → {status, ...} | null`.
   `null` 이면 다음 라우터, 끝까지 `null` 이면 종단 404. `query` 는 `URLSearchParams`.
+- **가시성은 요청당 한 번 계산한다**(`visibleTeams`) — `null` 이 "전부"(운영자·super)이고
+  배열이면 그 안의 팀만 존재한다. 라우터가 그 값 하나로 목록·검색·한 건·댓글·점수·이력을
+  전부 거른다. 경로마다 따로 계산하면 언젠가 한 경로가 빠지고, 빠진 경로는 조용히 새는 쪽이다.
+  `teamStore` 없이 `createMemoRoutes` 를 세우면 **기동이 죽는다**: 없을 때의 기본이 "전부
+  보임"이라 배선 하나가 빠진 날 비밀 팀이 통째로 열린다.
 - 설정은 `.env` 하나다: `PORT` `HOST` `MEMO_DB` `ADMIN_TOKEN_FILE` `BASE_PATH`
   `RELEASE_BASE_URL` `FILES_ROOT`. 0.11.0 에서 `FILES_PORT`·`FILES_HOST`·`MEMO_API` 가
   사라졌다 — 포트가 하나이고, 정체성은 물어볼 주소가 아니라 함수 호출이기 때문이다.
@@ -94,7 +100,7 @@ localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는�
 
 ```bash
 pnpm start                 # = node apps/backend/src/server.mjs
-pnpm test                  # node --test, 204개 (보드 127 + 관리자 40 + 아티팩트 37)
+pnpm test                  # node --test, 227개 (보드 145 + 관리자 45 + 아티팩트 37)
 pnpm migrate:calrory       # baro_calrory 의 memo.db 이관
 pnpm admin:token           # 관리자 토큰 확인 (없으면 생성) · --rotate 로 교체
 pm2 restart baro-memo --update-env
@@ -109,10 +115,10 @@ pm2 restart baro-memo --update-env
 
 ## Tests
 
-`node --test` 204개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다
+`node --test` 227개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다
 (`apps/files` 가 실제로 그렇게 딸려 왔다).
 
-보드 백엔드 127개, 열한 파일:
+보드 백엔드 145개, 열두 파일:
 
 - `memo-store.test.mjs` — 저장소 불변식, user/updatedBy 스탬프, 요약·total·기본 limit,
   **FTS5 트리거 동기화**(insert/update/delete)와 기존 DB 색인 backfill
@@ -131,10 +137,13 @@ pm2 restart baro-memo --update-env
 - `auth-routes.test.mjs` — 판정(`createVerdict`)의 세 갈래(사람·관리자·거절)와 whoami 라우트.
   같은 프로세스의 아티팩트 저장소가 이 판정으로 발행을 허락하거나 막으므로, 여기서 갈라지는
   코드가 곧 업로드 권한과 다운로드 인증이다. 폐기가 **다음 요청부터** 듣는 것도 여기서 못 박는다
+- `team.test.mjs` — 팀 격리. **비멤버의 눈으로 표면을 전부 두드린다**(한 건·목록·검색·
+  스니펫·댓글·점수·이력), 이동 이력이 존재를 흘리지 않는지, 남의 글을 팀으로 끌고 갈 수
+  없는지, whoami 의 teams 가 실제 권한과 같은지, 그리고 0.13.0 이전 DB 의 이관까지
 - `help-doc.test.mjs` — help 문서와 코드의 **양방향** 검사(유령 경로 금지·누락 금지),
   영문 단일 언어, 쿼리 힌트와 `LIST_PARAMS` 일치
 
-관리자 페이지 40개, `apps/admin/test/`:
+관리자 페이지 45개, `apps/admin/test/`:
 
 - `dom-shim.mjs` — 브라우저가 없으므로 최소 DOM 을 심어 `app.js` 를 `node:vm` 에서 **그대로**
   실행한다. index.html 에서 정적 `<option>`·버튼 라벨을 읽어 오므로 HTML↔JS 계약도 같이 걸린다.

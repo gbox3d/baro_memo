@@ -64,7 +64,7 @@ DB 에는 장부(어느 구간을 받았나·완성본 해시)만 있고 바이�
 apps/backend/    보드 백엔드 — 의존성 0 (node:sqlite, Node 24+), :3001
   src/           server.mjs · memo/ · auth/ · admin/ · core/
   help/          AI 에이전트용 사용 설명서 (영문) — GET /api/help 로 서빙
-  test/          node --test (125 tests)
+  test/          node --test (145 tests)
 apps/files/      아티팩트 저장소 — 의존성 0. 보드 프로세스에 마운트된다(/api/files)
   src/files/       store.mjs (세션·구간·완성본 장부 + 바이트 수명) · routes.mjs · schema.mjs
   src/mount.mjs    보드 서버가 얹는 마운트(청크 스트리밍 예외가 여기 있다)
@@ -72,7 +72,7 @@ apps/files/      아티팩트 저장소 — 의존성 0. 보드 프로세스에 
   help/index.md    에이전트용 영문 설명서 — GET /files/api/help
   test/            node --test (E2E 가 진짜 보드 서버를 들고 실제 소켓으로 끊긴 청크까지 돌린다)
 apps/admin/      관리자 페이지 — 토큰 발급/폐기 + 보드 열람. 무빌드 정적 (public/)
-  test/          브라우저 없이 도는 DOM 검사 (40) — 최소 DOM 을 심어 app.js 를 그대로 실행한다
+  test/          브라우저 없이 도는 DOM 검사 (45) — 최소 DOM 을 심어 app.js 를 그대로 실행한다
 skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙한다
 scripts/         migrate-from-calrory.mjs · admin-token.mjs · install-skill.sh
                  upload-artifact.sh — 아티팩트 업로드 클라이언트 (서버가 /files/upload.sh 로 서빙)
@@ -88,7 +88,7 @@ DB 는 저장소 밖에 둡니다 — 운영 호스트는 `/mnt/data/baro_memo_d
 
 ```bash
 pnpm start     # = node apps/backend/src/server.mjs
-pnpm test      # node --test, 204개 (보드 127 + 관리자 페이지 40 + 아티팩트 37)
+pnpm test      # node --test, 227개 (보드 145 + 관리자 페이지 45 + 아티팩트 37)
 ```
 
 설정은 `.env` 하나이고 변경은 재시작해야 반영됩니다.
@@ -125,7 +125,7 @@ pnpm admin:token       # 값과 파일 경로를 찍는다. 없으면 만들고(
 
 > 나중에 값을 다시 볼 때도 같은 명령입니다 — 「토큰 확인」 절.
 
-**4. 검사** — `pnpm test`. 204개가 다 통과해야 합니다.
+**4. 검사** — `pnpm test`. 227개가 다 통과해야 합니다.
 
 **5. 프로세스**
 
@@ -172,6 +172,8 @@ curl -s localhost:<PORT>/api/version        # package.json 과 같아야 한다
 | `/memo/api/memos` | 보드 — 요약 색인(`?status=`·`?q=`·`?author=`·`?user=`·`?limit=`·`?full=1`) |
 | `/memo/api/memos/:id/comments` | 한 메모의 댓글 — 읽기·쓰기 모두 토큰 |
 | `/memo/api/memos/:id/history` | 그 글에 무슨 일이 있었나 — 사실만(내용 없음), 토큰 필요 |
+| `/memo/api/teams` | 내 토큰이 읽고 쓸 수 있는 팀 — 명단은 관리자 축에만 |
+| `/memo/api/admin/teams` | 팀 생성·명단·구성원 넣고 빼기 — 관리자 토큰 전용 |
 | `/memo/api/admin/audit` | 삭제·수정 이력 전문 — 관리자 토큰 전용 (`?memoId=`·`?action=`·`?actor=`) |
 | `/memo/install.sh` | 팀원 기기에 스킬 까는 한 줄 (`curl -fsSL … \| sh`) |
 | `/files/api/help` | 아티팩트 저장소 사용법 (영문) — 청크 업로드·Range 다운로드 |

@@ -206,7 +206,9 @@ export function createMemoRoutes(ctx) {
     if (method === "POST" && pathname === "/api/memos") {
       // 글의 팀은 본문으로 고르되, 저장소에는 검증을 통과한 값만 넘어간다. 소속이 아닌 팀은
       // 존재를 말하지 않는다(404) — 어느 팀에 못 쓰는지의 목록이 곧 팀 목록이 되기 때문이다.
-      const team = body?.team === undefined ? DEFAULT_TEAM : String(body.team || "").trim();
+      // null 은 undefined 와 같이 "안 골랐다"로 읽는다 — 많은 클라이언트가 빈 칸을 null 로
+      // 직렬화하고, 그것을 404 로 거절하면 팀을 안 쓰는 사람이 팀 때문에 막힌다.
+      const team = body?.team == null ? DEFAULT_TEAM : String(body.team).trim();
       if (!team || !teamStore.get(team) || !teamStore.canPost(user, team)) return teamNotFound(body?.team);
       try { return json(201, { memo: memoStore.create(body, user, team) }); }
       catch (error) { return badRequest(error); }
@@ -343,8 +345,8 @@ export function createMemoRoutes(ctx) {
         // 비밀 팀으로 끌고 가면 글쓴이는 자기 글을 못 보고, 달아 둔 댓글도 준 점수도 손댈 수
         // 없게 되며(전부 404), 그 글은 비밀 팀 안에서 계속 읽힌다. 남의 말을 데려가는 것이라
         // 편집이 아니라 소유의 문제다.
-        if (body?.team !== undefined) {
-          const target = String(body.team || "").trim();
+        if (body?.team != null) {
+          const target = String(body.team).trim();
           if (!target || !teamStore.get(target) || !teamStore.canPost(user, target)) {
             return teamNotFound(body.team);
           }

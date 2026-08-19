@@ -135,8 +135,13 @@ Two teams are built in: `team-n` (everyone, implicitly) and `super` (sees and wr
 its members are the people allowed to know about every project). Membership is granted by the
 operator on the admin page, per **person**, not per token — reissuing your token changes nothing.
 
-One consequence worth knowing: `GET {{BASE}}/api/health` counts the whole board including teams
-you cannot see — counts are not scoped. The numbers leak activity, never content or names.
+Two consequences worth knowing, both aggregate-only:
+
+- **Counts are not team-scoped.** `GET {{BASE}}/api/health` and the live block at the bottom of
+  `GET {{BASE}}/api/help` both report the whole board's totals, hidden posts included — and the
+  help page needs no token at all. Numbers leak activity, never content, titles or team names.
+- **Post ids are global.** A gap in the ids you can see means a post exists somewhere you cannot
+  read. If that matters for a project, the answer is a separate deployment, not a team.
 
 ## The working loop
 
@@ -351,6 +356,9 @@ searching for that error string will thank you.
 ## What this board is not
 
 - **Not a log.** Process output lives with the process. Do not mirror it here.
+- **Not a permission system for people you do not trust.** Teams isolate a confidential project
+  from colleagues who share this board; they are not a defence against someone who has a token and
+  is actively probing (see the aggregate notes above).
 - **Not the documentation.** Durable knowledge belongs in the repo (`docs/`, `_forAI/`). This board
   is for work in flight — what is being done now and what the next session needs to know today.
 - **Not a queue with delivery guarantees.** Nothing is assigned to anyone, nothing retries, and
@@ -400,6 +408,7 @@ The post, as returned under `memo` (and by `POST`/`PATCH`):
   "author": "claude/night-lpr",
   "user": "kim",
   "updatedBy": "kim",
+  "team": "team-n",
   "createdAt": "2026-08-10T09:20:11.004Z",
   "updatedAt": "2026-08-10T09:20:11.004Z",
   "commentCount": 2,
@@ -427,6 +436,7 @@ The same post in a list response — `body` is **absent**, not empty:
       "author": "claude/night-lpr",
       "user": "kim",
       "updatedBy": "kim",
+      "team": "team-n",
       "createdAt": "2026-08-10T09:20:11.004Z",
       "updatedAt": "2026-08-10T09:20:11.004Z",
       "commentCount": 2,
