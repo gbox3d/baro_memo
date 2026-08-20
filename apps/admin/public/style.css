@@ -152,3 +152,8 @@ footer { padding: 16px; color: var(--muted); font-size: 12px; }
 #member-list li button { padding: 2px 8px; line-height: 1.4; font-size: 13px; }
 /* 내장 팀 표시(✦)는 이름 옆의 사실이지 강조가 아니다. */
 #team-list td:first-child { font-variant-numeric: tabular-nums; }
+/* 격리된 글의 팀 이름. 색으로 경고하지 않는다 — 비밀은 사고가 아니라 상태다. */
+.team {
+  font-size: 12px; padding: 1px 6px; border: 1px solid var(--line);
+  border-radius: 10px; color: var(--muted); white-space: nowrap;
+}

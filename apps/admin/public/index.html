@@ -101,7 +101,9 @@
     </div>
 
     <table id="memo-list">
-      <thead><tr><th>#</th><th>상태</th><th>user</th><th>author</th><th>제목</th><th>댓글</th><th>중요도</th><th>갱신</th></tr></thead>
+      <!-- 팀 칸은 기본팀(team-n)일 때 비운다. 123건이 전부 같은 값이면 그건 정보가 아니라
+           잡음이고, 비어 있지 않은 줄이 곧 "일반 구성원에게 안 보이는 글"이다. -->
+      <thead><tr><th>#</th><th>상태</th><th title="기본팀(team-n)은 비워 둡니다 — 값이 있는 줄이 격리된 글입니다">팀</th><th>user</th><th>author</th><th>제목</th><th>댓글</th><th>중요도</th><th>갱신</th></tr></thead>
       <tbody></tbody>
     </table>
   </section>

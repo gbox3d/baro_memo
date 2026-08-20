@@ -514,6 +514,15 @@ async function loadTokens() {
   renderTokens();
 }
 
+// 리스트의 팀 칸. 기본팀은 비운다 — 거의 모든 줄이 team-n 이라 다 적으면 눈이 걸러야 할 것이
+// 늘기만 한다. 값이 보이는 줄이 곧 격리된 글이고, 그게 이 칸을 넣는 이유다.
+// 옛 백엔드(0.13.0 이전)는 team 을 안 싣는다 — 그때는 빈 칸이지 "기본팀"이 아니므로 구분해 둔다.
+function teamCell(m) {
+  if (m.team === undefined) return "";
+  if (m.team === "team-n") return "";
+  return `<span class="team" title="이 글은 ${esc(m.team)} 구성원에게만 보입니다">${esc(m.team)}</span>`;
+}
+
 // ---- 팀 ---------------------------------------------------------------------------------
 //
 // 소속은 사람(user)에 걸린다 — 토큰이 아니다. 폐기·재발급이 팀을 건드리면 안 되기 때문이고,
@@ -633,6 +642,7 @@ function renderMemos() {
     tr.innerHTML = `
       <td>${m.id}</td>
       <td><span class="st ${m.status}">${m.status}</span></td>
+      <td>${teamCell(m)}</td>
       <td>${esc(m.user) || "—"}</td>
       <td>${esc(m.author) || "—"}</td>
       <td>${esc(m.title) || "—"}</td>

@@ -709,3 +709,39 @@ test("팀 속성창은 세로로 쌓인다 — .detail 의 기본은 가로라 �
   const list = css.match(/#member-list\s*\{([^}]*)\}/);
   assert.ok(list && /list-style:\s*none/.test(list[1]), "명단에 브라우저 기본 불릿이 남는다");
 });
+
+test("리스트의 팀 칸: 격리된 글만 이름이 보이고 기본팀은 비어 있다", async () => {
+  const page = loadAdminPage({
+    adminToken: "adm",
+    memos: [
+      { id: 1, title: "public", status: "open", user: "kim", author: "", team: "team-n",
+        bodyPreview: "p", bodyLength: 1, commentCount: 0, score: 0, voters: 0, myScore: 0,
+        createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" },
+      { id: 2, title: "confidential", status: "open", user: "kim", author: "", team: "super",
+        bodyPreview: "s", bodyLength: 1, commentCount: 0, score: 0, voters: 0, myScore: 0,
+        createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" },
+    ],
+  });
+  await page.settled;
+  const rows = page.node("#memo-list tbody").children;
+  assert.equal(rows.length, 2);
+  // 기본팀은 비운다 — 거의 모든 줄이 team-n 이라 다 적으면 눈이 걸러야 할 것만 늘어난다.
+  assert.equal(/team-n/.test(rows[0].innerHTML), false, "기본팀 이름이 리스트에 적히면 잡음이다");
+  assert.match(rows[1].innerHTML, /super/, "격리된 글은 어느 팀인지 보여야 한다");
+  // 표의 칸 수와 머리글 수가 어긋나면 열이 통째로 밀린다(HTML↔JS 계약).
+  const headers = (publicFile("index.html").match(/<table id="memo-list">[\s\S]*?<\/thead>/) || [""])[0]
+    .match(/<th(?=[\s>])[^>]*>/g).length;
+  assert.equal(rows[0].innerHTML.match(/<td/g).length, headers, "머리글과 칸 수가 다르면 열이 밀린다");
+});
+
+test("옛 백엔드(team 없음)에서는 팀 칸이 비고 화면은 산다", async () => {
+  const page = loadAdminPage({
+    adminToken: "adm",
+    memos: [{ id: 1, title: "old", status: "open", user: "kim", author: "",
+      bodyPreview: "p", bodyLength: 1, commentCount: 0, score: 0, voters: 0, myScore: 0,
+      createdAt: "2026-08-14T00:00:00.000Z", updatedAt: "2026-08-14T00:00:00.000Z" }],
+  });
+  await page.settled;
+  const row = page.node("#memo-list tbody").children[0];
+  assert.equal(/undefined/.test(row.innerHTML), false, "없는 값이 화면에 'undefined' 로 나오면 안 된다");
+});

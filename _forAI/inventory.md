@@ -52,6 +52,8 @@ scripts/         upload-artifact.sh — 아티팩트 업로드(청크·재개·�
 skills/baro-memo/  Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙, install.sh 가 깐다
 deploy/          nginx-baro-memo.conf · nginx-baro-files.conf — web_pub server 블록에 include
 ecosystem.config.cjs  pm2 매니페스트 — baro-memo(:3001) **하나**. 왜 하나인지는 파일 끝 주석에
+docs/            사람이 읽는 운영 문서(한국어) — board · operations · tokens · teams · agents · files
+                 API 계약은 여기 없다. 정본은 서빙되는 help 이고 docs 는 링크만 건다
 localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는다 — 아래 참조
 ```
 
@@ -110,7 +112,8 @@ pm2 restart baro-memo --update-env
 번에 준다. pm2 의 `online` 은 죽음만 잡고 낡음은 못 잡으므로, 재시작 뒤에는 `/api/version` 이
 `package.json` 과 같은지 반드시 본다.
 
-배포 절차(새 호스트 7단계 · 갱신 · 팀원 붙이기)는 `readme.md` 의 "배포 절차" 가 정본이다.
+배포 절차(새 호스트 · 갱신 · 백업 · 장애)는 `docs/operations.md` 가 정본이다. `readme.md` 에는
+갱신 배포 세 줄과 문서 지도만 둔다.
 단계마다 확인 방법이 붙어 있고, 확인이 안 되면 다음으로 가지 않는다.
 
 ## Tests
