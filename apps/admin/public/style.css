@@ -135,3 +135,20 @@ td .st { font-size: 12px; }
   font: 13px/1.6 ui-monospace, monospace;
 }
 footer { padding: 16px; color: var(--muted); font-size: 12px; }
+
+/* 팀 구획. 속성창 하나에 폼과 명단이 세로로 쌓인다 — `.detail` 의 기본은 가로(flex row)라
+   그대로 두면 명단이 추가 폼 **옆에** 붙는다. display 는 건드리지 않는다(위의 그 규칙). */
+#team-detail { flex-direction: column; align-items: stretch; gap: 10px; }
+/* 명단은 상태다. 이름 옆의 제거만 액션이고, 그 액션은 고른 팀 안에서만 보인다. */
+#member-list { list-style: none; margin: 0; padding: 0; }
+#member-list:empty::after {
+  content: "구성원 없음"; color: var(--muted); font-size: 13px;
+}
+#member-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg); margin-top: 6px;
+}
+#member-list li button { padding: 2px 8px; line-height: 1.4; font-size: 13px; }
+/* 내장 팀 표시(✦)는 이름 옆의 사실이지 강조가 아니다. */
+#team-list td:first-child { font-variant-numeric: tabular-nums; }

@@ -696,3 +696,16 @@ test("0.13.0 이전 백엔드에서는 팀 구획만 비고 나머지는 돈다 
   assert.equal(page.node("#token-list tbody").children.length, 1, "토큰 구획은 멀쩡해야 한다");
   assert.equal(page.status().includes("404"), false, "낡음의 안내는 판 번호가 한다 — 에러 도배가 아니라");
 });
+
+test("팀 속성창은 세로로 쌓인다 — .detail 의 기본은 가로라 명단이 폼 옆에 붙는다", () => {
+  // shim 은 CSS 를 못 본다. 그래서 이 계약도 글자로 대조한다 — 이 규칙이 사라지면 화면에서만
+  // 깨지고(구성원 목록이 추가 폼 옆에 눕고 불릿이 붙는다) 검사는 초록인 채로 남는다.
+  const css = publicFile("style.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  const detail = css.match(/#team-detail\s*\{([^}]*)\}/);
+  assert.ok(detail, "#team-detail 규칙이 없다");
+  assert.match(detail[1], /flex-direction:\s*column/);
+  assert.equal(/(^|[;\s])display\s*:/.test(detail[1]), false,
+    "여기서 display 를 주면 hidden 이 안 먹는다(.detail 과 같은 함정)");
+  const list = css.match(/#member-list\s*\{([^}]*)\}/);
+  assert.ok(list && /list-style:\s*none/.test(list[1]), "명단에 브라우저 기본 불릿이 남는다");
+});
