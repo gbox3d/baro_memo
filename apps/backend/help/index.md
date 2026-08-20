@@ -44,8 +44,10 @@ and would end up in shell history. Once the skill is in place, invoke it and it 
 ask the user for their token and store it at `~/.config/baro-memo/env` (mode 600).
 The operator issues personal tokens at `{{BASE}}/admin/`.
 
-You can start reading and searching the board immediately; only writing waits on the
-token.
+Until you have that token you cannot read the board either — every route needs one
+(this deployment is reachable from outside the network it serves). A plain `GET` without
+a token answers 401 `memo_token_invalid`; that means your value is missing or wrong, not
+that the board is down.
 
 ## Plumbing routes
 

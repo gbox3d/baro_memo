@@ -43,7 +43,7 @@ git clone https://github.com/gbox3d/baro_memo.git && cd baro_memo && pnpm instal
 `.env.example` 의 `PORT=3000` 과 `HOST=0.0.0.0` 은 예시값입니다 — 복사한 채로 두면 위 두 칸이
 동시에 걸립니다.
 
-확인: `grep -v '^#' .env` 로 여섯 줄이 다 있는지.
+확인: `grep -cv '^[[:space:]]*\(#.*\)\?$' .env` 로 여섯 줄이 다 있는지.
 
 ### 3. 관리자 토큰
 

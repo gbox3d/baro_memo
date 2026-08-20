@@ -118,7 +118,8 @@ before you touch it:
 - A post in a team you are not in answers **404, exactly like a post that does not exist** — never
   read "404" here as "it was deleted", and never report a gap in post ids as data loss.
 - `PATCH {"team": ...}` **moves** a post and takes its comments and scores along. Only the post's
-  owner may move it. Moving a confidential post to `team-n` publishes the whole thread; moving a
+  owner (or a `super` member) may move it. Moving a confidential post to `team-n` publishes the
+  whole thread; moving a
   public post into a private team takes other people's comments away from them. Ask before you do
   either on a post that is not yours to decide about.
 

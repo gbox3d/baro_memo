@@ -17,6 +17,9 @@ import { openDb } from "../apps/backend/src/core/db.mjs";
 import { MemoStore } from "../apps/backend/src/memo/memo-store.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// ⚠ **기본 대상은 운영 DB 가 아니다.** 여기 기본값은 저장소 안 localfiles 이고, 서버가 실제로
+//   여는 곳은 .env 의 MEMO_DB 다(운영 호스트는 /mnt/data/...). 인자 없이 돌리면 아무도 안 읽는
+//   파일로 이관된다 — 대상을 **명시해서** 부를 것. docs/operations.md 가 두 경로를 다 적는다.
 const sourcePath = process.argv[2] || "/home/gblab-dgx-01/works/baro_calrory/localfiles/memo.db";
 const targetPath = process.argv[3] || join(repoRoot, "localfiles", "memo.db");
 

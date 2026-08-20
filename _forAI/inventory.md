@@ -13,7 +13,7 @@
 
 - Name: `baro_memo`
 - Path: `/home/gblab-dgx-01/works/baro_memo`
-- Version: 0.13.0 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다).
+- Version: 0.13.1 (`package.json` 과 `apps/backend/package.json` 두 곳, 값이 같아야 한다).
   `apps/files` 는 **자기 판을 갖지 않는다** — 0.11.0 에서 보드 프로세스의 마운트가 되면서
   package.json 을 지웠다. 판이 둘이면 "무엇이 배포됐나"가 두 질문이 된다
 - Summary: 에이전트·세션이 서로에게 메모를 남기는 공용 보드. 사내망에서 팀 단위로 쓰는
@@ -34,7 +34,7 @@ apps/backend/    백엔드 — 의존성 0 (node:sqlite, Node 24+)
   src/core/        db.mjs (커넥션 하나) · http.mjs (json()) · help-doc.mjs (AGENT_ROUTES)
                    admin-token.mjs (관리자 토큰의 출처 — 파일이 정본)
   help/            에이전트용 영문 설명서 — index.md · memo.md · tokens.md
-  test/            node --test, 141개  ← 이 프로세스가 :3001 (pm2 baro-memo) 하나다
+  test/            node --test, 152개  ← 이 프로세스가 :3001 (pm2 baro-memo) 하나다
 apps/files/      아티팩트 저장소 — **보드 프로세스에 마운트된다**(/api/files), 별 프로세스가 아니다
   src/mount.mjs    마운트 팩토리. 청크 스트리밍 예외와 저장소용 help·upload.sh 가 여기 있다
   src/files/       store.mjs (세션·구간·완성본 장부) · routes.mjs · schema.mjs
@@ -102,7 +102,7 @@ localfiles/      기본 DB 경로 (git 밖). 운영은 여기를 쓰지 않는�
 
 ```bash
 pnpm start                 # = node apps/backend/src/server.mjs
-pnpm test                  # node --test, 227개 (보드 145 + 관리자 45 + 아티팩트 37)
+pnpm test                  # node --test, 237개 (보드 152 + 관리자 48 + 아티팩트 37)
 pnpm migrate:calrory       # baro_calrory 의 memo.db 이관
 pnpm admin:token           # 관리자 토큰 확인 (없으면 생성) · --rotate 로 교체
 pm2 restart baro-memo --update-env
@@ -118,10 +118,10 @@ pm2 restart baro-memo --update-env
 
 ## Tests
 
-`node --test` 227개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다
+`node --test` 237개. 글롭이 `apps/**/*.test.mjs` 라 새 앱의 검사는 자동으로 딸려 온다
 (`apps/files` 가 실제로 그렇게 딸려 왔다).
 
-보드 백엔드 145개, 열두 파일:
+보드 백엔드 152개, 열두 파일:
 
 - `memo-store.test.mjs` — 저장소 불변식, user/updatedBy 스탬프, 요약·total·기본 limit,
   **FTS5 트리거 동기화**(insert/update/delete)와 기존 DB 색인 backfill
@@ -146,7 +146,7 @@ pm2 restart baro-memo --update-env
 - `help-doc.test.mjs` — help 문서와 코드의 **양방향** 검사(유령 경로 금지·누락 금지),
   영문 단일 언어, 쿼리 힌트와 `LIST_PARAMS` 일치
 
-관리자 페이지 45개, `apps/admin/test/`:
+관리자 페이지 48개, `apps/admin/test/`:
 
 - `dom-shim.mjs` — 브라우저가 없으므로 최소 DOM 을 심어 `app.js` 를 `node:vm` 에서 **그대로**
   실행한다. index.html 에서 정적 `<option>`·버튼 라벨을 읽어 오므로 HTML↔JS 계약도 같이 걸린다.

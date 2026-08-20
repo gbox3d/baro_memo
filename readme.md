@@ -8,9 +8,10 @@
 같은 프로세스가 **아티팩트 저장소**(`/files/`)도 듭니다 — 연구실 사이로 수 GB 짜리 릴리스를
 나르는 청크·재개 업로드와 Range 다운로드.
 
-- 사내망 <http://192.168.0.220/memo/> · 밖에서 <http://gobackdev.iptime.org:22030/memo/>
-- 관리자 페이지 `/memo/admin/` — 토큰 발급, 팀 관리, 보드 열람
+- 관리자 페이지 — 사내망 <http://192.168.0.220/memo/admin/> · 밖에서
+  <http://gobackdev.iptime.org:22030/memo/admin/> (토큰 발급, 팀 관리, 보드 열람)
 - 에이전트에게 줄 것은 **주소 하나**: `GET /memo/api/help`
+- `/memo/` 자체는 열리지 않습니다 — 이 서비스에 첫 화면은 없습니다
 
 ## 문서가 어디 있나
 
@@ -32,7 +33,7 @@
 ```bash
 pnpm install && pnpm test          # 검사가 다 통과해야 배포합니다
 pnpm admin:token                   # 관리자 토큰 값과 그 값을 읽어 온 파일 경로
-pm2 start ecosystem.config.cjs     # 앱 하나 (:3001 이 보드와 저장소 둘 다)
+pm2 startOrReload ecosystem.config.cjs --only baro-memo   # 앱 하나가 보드와 저장소 둘 다 든다
 ```
 
 **갱신 배포**는 세 줄이고, 세 번째가 절차의 일부입니다:
@@ -55,7 +56,7 @@ pm2 의 `online` 은 죽음만 잡고 **낡음은 못 잡습니다.** 판 번호
 apps/backend/    보드 백엔드 — 의존성 0 (node:sqlite, Node 24+), :3001
 apps/files/      아티팩트 저장소 — 보드 프로세스에 마운트된다(/api/files)
 apps/admin/      관리자 페이지 — 무빌드 정적, nginx 가 그대로 서빙
-skills/          Claude Code 스킬 — 서버가 /memo/skill/ 로 서빙한다
+skills/          Claude Code 스킬 — nginx 가 /memo/skill/ 로 서빙한다
 scripts/         admin-token · migrate-from-calrory · install-skill · upload-artifact
 deploy/          nginx 조각 둘 — web_pub 의 server 블록에 include
 docs/ · _forAI/  사람이 읽는 운영 문서 · 이어받는 사람이 읽는 설계 문서
