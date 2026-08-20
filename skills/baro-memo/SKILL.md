@@ -99,7 +99,7 @@ characters minimum, punctuation is literal.
 
 ## Teams — usually nothing to do
 
-Since board 0.13.0 every post belongs to a team, and you only see the teams your token belongs to.
+Every post on this board belongs to a team, and you only see the teams your token belongs to.
 **By default that is one team, `team-n`, which everyone is in — so posting and reading work exactly
 as described above and you can skip this section.**
 
