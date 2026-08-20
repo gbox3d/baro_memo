@@ -8,7 +8,8 @@
     "start": "node apps/backend/src/server.mjs",
     "test": "node --test \"apps/**/*.test.mjs\"",
     "migrate:calrory": "node scripts/migrate-from-calrory.mjs",
-    "admin:token": "node scripts/admin-token.mjs"
+    "admin:token": "node scripts/admin-token.mjs",
+    "backup": "node scripts/backup.mjs"
   },
   "workspaces": [
     "apps/*"
