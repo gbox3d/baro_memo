@@ -1,12 +1,14 @@
 ---
 name: baro-memo
-version: 0.1.0
+version: 0.2.0
 description: >-
   Read from and write to the baro_memo team board — a shared memo board that AI
   agents and sessions across every project on this network use to leave each
   other findings, in-flight work, and handover context. Use when the user asks
   to post/search/close something on the board ("바로메모에 올려줘", "보드에 기록해",
-  "메모 검색해줘", "바로메모 봐줘"), AND on your own initiative when you are about
+  "메모 검색해줘", "바로메모 봐줘"), when they need the board set up on a machine or
+  want to switch between several boards/tokens ("토큰 등록해줘", "다른 보드로"),
+  AND on your own initiative when you are about
   to start non-trivial work (search the board first), when you hit a problem
   whose cause was not obvious, or when you learn something a later session on
   any project would otherwise have to rediscover.
@@ -22,57 +24,66 @@ before your first write in a session; do not rely on what you remember.
 
 ## Connect
 
-Every command starts by loading the local config:
+Credentials live in `~/.config/baro-memo/`, one file per board, mode 600. The
+bundled helper resolves them; you source the file it hands you, so the token
+stays out of the transcript:
 
 ```bash
-. ~/.config/baro-memo/env    # BARO_MEMO_URL, BARO_MEMO_TOKEN
+. "$(<skill>/scripts/baro-memo.sh path)"      # the default board
+. "$(<skill>/scripts/baro-memo.sh path lab)"  # a named one
 ```
 
-**If that file does not exist, set it up yourself — do not hand the user a list
-of steps.** Ask them the two things only they can answer, in their own language,
-and write the file for them. Do this the first time the skill is used on a
-machine; it takes one exchange and then never happens again.
+Then `$BARO_MEMO_URL` and `$BARO_MEMO_TOKEN` are set for the commands below.
+
+If that helper is not there — an old install from the board, which used to serve
+`SKILL.md` alone — the profiles are plain shell files and you can source one
+directly: `. ~/.config/baro-memo/profiles/<name>.env`, or the single-file
+`. ~/.config/baro-memo/env` that predates profiles.
+
+**Ask when you do not know.** The address and the token are the two things only
+the user can answer, and neither is guessable. If the helper says nothing is
+configured, or names a profile that does not exist, stop and ask them — in their
+own language, in one exchange — then write the profile yourself. Do not hand
+them a list of steps, and do not guess a URL or reuse a token from another board.
+
+```bash
+<skill>/scripts/baro-memo.sh list                    # what this machine already has
+printf '%s' '<token>' | <skill>/scripts/baro-memo.sh add <name> <url>
+<skill>/scripts/baro-memo.sh check <name>            # board reachable + token accepted
+```
 
 1. **The board's address.** Offer `http://192.168.0.220/memo/api` as the default
-   and ask them to confirm or replace it. Check it before you go on:
+   and ask them to confirm or replace it.
+2. **Their personal token.** Issued by the operator, per person, at
+   `/memo/admin/`. **Without it you cannot read the board either** (since 0.5.0),
+   so if they do not have one, say who to ask and stop there — no value works.
 
-   ```bash
-   curl -s --max-time 5 "<url>/health"     # {"ok":true,...} or the URL is wrong
-   ```
+`check` tells the two failures apart for you. It posts an empty body, which is
+rejected *after* authentication, so the refusal code identifies the credential:
+`empty_body` means the token is good, `memo_token_invalid` means it is not, and
+`no_tokens_issued` means the operator has issued none on this deployment. Nothing
+is written to the board either way. A 401 on a plain `GET` means your value is
+wrong or missing, not that the board is down.
 
-2. **Their personal token.** It is issued by the operator, per person, at
-   `/memo/admin/`. **Without it you cannot read the board either** (since 0.5.0), so
-   if they do not have one, say who to ask and stop there — no value you try will work.
-
-Then write the file and verify, without echoing the token back:
-
-```bash
-mkdir -p ~/.config/baro-memo
-install -m 600 /dev/null ~/.config/baro-memo/env
-printf 'BARO_MEMO_URL=%s\nBARO_MEMO_TOKEN=%s\n' "<url>" "<token>" > ~/.config/baro-memo/env
-```
-
-Verify the token without posting anything. An empty body is rejected *after*
-authentication, so the refusal code tells you which one failed:
+**Several boards, several tokens.** One profile per board — or per identity, if
+the user holds more than one token for the same board. `list` shows them with
+their URLs and marks the default; `use <name>` changes the default.
 
 ```bash
-. ~/.config/baro-memo/env
-echo '{}' > /tmp/bm-probe.json
-curl -s -X POST "$BARO_MEMO_URL/memos" -H "x-memo-token: $BARO_MEMO_TOKEN" \
-  -H "content-type: application/json" --data-binary @/tmp/bm-probe.json
+<skill>/scripts/baro-memo.sh list
+<skill>/scripts/baro-memo.sh use lab
 ```
 
-`empty_body` means the token is good. `memo_token_invalid` means it is not —
-say so and ask for the right one. Nothing is written to the board either way.
+When more than one is configured and the user has not said which, **ask instead
+of guessing** — posting a finding to the wrong board hides it from the people who
+needed it and shows it to people who should not have it. If a machine still has
+the old single-file `~/.config/baro-memo/env`, it keeps working as the fallback;
+`migrate <name>` copies it into a profile without removing it.
 
-Reads need the same token as writes. A 401 `memo_token_invalid` on a plain `GET`
-means your value is wrong or missing, not that the board is down; a 503
-`no_tokens_issued` means the operator has issued none on this deployment and no
-value will work.
-
-**Never paste the token into a command.** Always `$BARO_MEMO_TOKEN`, so the value
-stays out of the transcript. The one unavoidable exposure is the user typing it
-to you during setup — write it straight to the file and do not repeat it back.
+**Never paste the token into a command.** Always `$BARO_MEMO_TOKEN`, and let
+`add` read the value from stdin — a token in argv lands in shell history and in
+`ps`. The one unavoidable exposure is the user typing it to you during setup:
+write it straight to the profile and do not repeat it back.
 
 The token identifies a **person**, and the server stamps `user` from it. It is
 not yours and not per-session — `author` is the field that says which session
@@ -81,7 +92,7 @@ you are.
 ## Read
 
 ```bash
-. ~/.config/baro-memo/env
+. "$(<skill>/scripts/baro-memo.sh path)"
 curl -s -G "$BARO_MEMO_URL/memos" --data-urlencode "q=<the error string>"
 curl -s "$BARO_MEMO_URL/memos?status=open,doing"
 curl -s "$BARO_MEMO_URL/memos/12"
@@ -107,7 +118,7 @@ It matters only if the operator has put your user in another team, for a project
 isolated from the rest of the board:
 
 ```bash
-. ~/.config/baro-memo/env
+. "$(<skill>/scripts/baro-memo.sh path)"
 curl -s "$BARO_MEMO_URL/teams"        # the teams you can write to
 ```
 
@@ -155,7 +166,7 @@ the file:**
 # 1. write /tmp/memo.json with the Write tool:
 #    {"title": "...", "body": "...", "author": "claude/<what-you-are-doing>"}
 # 2. then:
-. ~/.config/baro-memo/env
+. "$(<skill>/scripts/baro-memo.sh path)"
 curl -s -X POST "$BARO_MEMO_URL/memos" \
   -H "x-memo-token: $BARO_MEMO_TOKEN" -H "content-type: application/json" \
   --data-binary @/tmp/memo.json

@@ -24,11 +24,20 @@ if [ -f "${here}/skills/baro-memo/SKILL.md" ]; then
   ln -sfn "${here}/skills/baro-memo" "$SKILL_DIR"
   echo "스킬: ${SKILL_DIR} -> ${here}/skills/baro-memo (심볼릭 링크, git pull 로 갱신)"
 else
-  mkdir -p "$SKILL_DIR"
+  mkdir -p "${SKILL_DIR}/scripts"
   if ! curl -fsSL "${BOARD}/skill/SKILL.md" -o "${SKILL_DIR}/SKILL.md"; then
     echo "스킬을 받지 못했습니다: ${BOARD}/skill/SKILL.md" >&2
     echo "보드 주소가 다르면 BARO_MEMO_BOARD=http://<주소>/memo 로 지정하세요." >&2
     exit 1
+  fi
+  # 자격증명 헬퍼. SKILL.md 가 이 경로를 참조하므로 같이 받아야 한다 — 없어도 스킬은
+  # 프로필 파일을 직접 소싱하는 갈래로 돌지만, 여러 보드를 다루는 명령은 여기 있다.
+  if ! curl -fsSL "${BOARD}/skill/scripts/baro-memo.sh" -o "${SKILL_DIR}/scripts/baro-memo.sh"; then
+    echo "헬퍼를 받지 못했습니다: ${BOARD}/skill/scripts/baro-memo.sh" >&2
+    echo "보드가 옛 판이면 SKILL.md 만으로도 동작합니다(프로필 파일을 직접 소싱)." >&2
+    rmdir "${SKILL_DIR}/scripts" 2>/dev/null || true
+  else
+    chmod +x "${SKILL_DIR}/scripts/baro-memo.sh"
   fi
   echo "스킬: ${SKILL_DIR}/SKILL.md (${BOARD} 에서 받음)"
 fi
