@@ -42,7 +42,7 @@
 - 메인 엔트리포인트: `apps/backend/src/server.mjs` (`pnpm start`)
 - 관리자 페이지: `apps/admin/public/` — nginx 가 디스크에서 바로 서빙한다(빌드도 재시작도 없다).
   검사는 `apps/admin/test/` 에서 브라우저 없이 돈다
-- 검사: `pnpm test` 252개 (백엔드 164 + 관리자 페이지 51 + 아티팩트 저장소 37)
+- 검사: `pnpm test` 258개 (백엔드 164 + 관리자 페이지 57 + 아티팩트 저장소 37)
 
 - DB: `/mnt/data/baro_memo_db/memo.db` — 저장소 밖이다. `.env` 의 `MEMO_DB` 가 정본
 - 아티팩트 바이트: `/mnt/data/baro_memo_files/` — 같은 볼륨, `.env` 의 `FILES_ROOT`. 파일은

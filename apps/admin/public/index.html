@@ -156,6 +156,20 @@
   <textarea id="invite-text" spellcheck="false"></textarea>
 </dialog>
 
+<!-- 기다림. `<dialog>` 인 이유가 값의 절반이다 — 모달이면 그 사이의 클릭이 막힌다. 발급은
+     멱등하지 않아서(두 번 눌리면 같은 사람에게 활성 토큰이 둘 생긴다) 버튼마다 disabled 를
+     걸어 두었는데, 그건 그 버튼 하나만 막는다. 느린 왕복에서 조바심이 향하는 곳은 대개 옆의
+     다른 버튼이다.
+     **빠른 요청에는 안 뜬다.** 사내망 왕복은 한 자리 ms 라 매번 띄우면 깜빡임이 곧 잡음이다 —
+     문턱을 넘긴 요청에만 뜬다(app.js 의 BUSY_AFTER_MS). -->
+<dialog id="busy-dialog">
+  <span class="spinner" aria-hidden="true"></span>
+  <span id="busy-text">서버 응답을 기다리는 중</span>
+  <!-- 오래 걸리면 초를 센다. 운영자가 실제로 묻는 것은 "느린가, 멈췄나" 이고 그 둘은
+       화면에 숫자가 움직이는지로만 갈린다. -->
+  <span id="busy-elapsed"></span>
+</dialog>
+
 <footer><span id="status"></span></footer>
 <script src="app.js"></script>
 </body>

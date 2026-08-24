@@ -835,3 +835,101 @@ test("옛 백엔드(team 없음)에서는 팀 칸이 비고 화면은 산다", a
   const row = page.node("#memo-list tbody").children[0];
   assert.equal(/undefined/.test(row.innerHTML), false, "없는 값이 화면에 'undefined' 로 나오면 안 된다");
 });
+
+
+// ---- 기다림 팝업 --------------------------------------------------------------------------
+//
+// 이 팝업의 값은 둘이다: 화면이 죽은 것처럼 보이지 않는 것, 그리고 **그 사이의 클릭이 막히는
+// 것**. 뒤엣것 때문에 모달이고, 모달이기 때문에 "반드시 닫힌다" 가 안전 조건이 된다 — 안 닫히면
+// 화면이 통째로 잠기고 되돌릴 손이 없다. 검사의 무게가 거기 실린다.
+
+// 문턱(app.js 의 BUSY_AFTER_MS = 200ms)을 넘길 만큼만 기다린다. 상수를 올리면 여기가 먼저
+// 빨간불이 되는 것이 맞다 — 검사가 그 값을 알아야 한다는 뜻이니까.
+const PAST_BUSY_THRESHOLD = 260;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// **`page.settled` 도 위의 `drain()` 도 여기서는 못 쓴다.** 앞엣것은 화면을 세울 때 만든
+// 약속이라 이미 지켜져 있고, 뒤엣것은 마이크로태스크만 흘린다 — 방금 풀어 준 fetch 는 실제
+// 타이머를 지나야 끝난다. 그래서 진짜 시간으로 기다린다.
+const flush = () => wait(20);
+
+// 붙잡아 둔 응답은 **무슨 일이 있어도** 풀어야 한다. 단언이 중간에 터지면 그 요청들이 영영
+// 안 끝나고, 경과 시계(setInterval)가 이벤트 루프를 붙잡아 러너가 통째로 매달린다 — 실패가
+// "빨간불" 이 아니라 "안 끝남" 으로 나오는 것이 이 검사들의 함정이다.
+async function withHeld(options, body) {
+  const page = loadAdminPage({ adminToken: "adm", holdFetch: true, ...options });
+  try { await body(page); } finally { page.releaseFetch(); await flush(); }
+  return page;
+}
+
+test("느린 요청에는 기다림 팝업이 뜨고, 끝나면 닫힌다", async () => {
+  const page = await withHeld({}, async (p) => {
+    assert.equal(p.busyDialog.open, false, "요청이 뜨자마자 뜨지는 않는다");
+    await wait(PAST_BUSY_THRESHOLD);
+    assert.equal(p.busyDialog.open, true, "문턱을 넘긴 요청에는 떠야 한다");
+  });
+  assert.equal(page.busyDialog.open, false, "닫히지 않으면 화면이 잠긴다 — 모달을 되돌릴 손이 없다");
+});
+
+test("빠른 요청에는 안 뜬다 — 사내망 왕복마다 깜빡이면 그 깜빡임이 곧 잡음이다", async () => {
+  const page = loadAdminPage({ adminToken: "adm" });
+  await page.settled;
+  assert.equal(page.busyDialog.open, false);
+  // 문턱을 지나도 뒤늦게 뜨지 않는다 — 끝난 요청의 예약이 살아 있으면 아무 때나 뜬다.
+  await wait(PAST_BUSY_THRESHOLD);
+  assert.equal(page.busyDialog.open, false);
+});
+
+test("나란한 요청 중 하나가 끝나도 팝업은 남는다 — 불리언이면 여기서 닫힌다", async () => {
+  // 첫 화면은 네 요청을 나란히 띄운다(loadVersion·loadTokens·loadTeams·loadMemos).
+  const page = await withHeld({}, async (p) => {
+    await wait(PAST_BUSY_THRESHOLD);
+    assert.equal(p.busyDialog.open, true);
+    assert.ok(p.heldCount() >= 2, "나란한 요청이 둘 이상이어야 이 검사가 뜻이 있다");
+
+    p.releaseFetch(1);          // 하나만 푼다 — 나머지는 계속 붙잡힌다
+    await flush();
+    assert.equal(p.busyDialog.open, true, "가장 먼저 끝난 하나가 나머지의 팝업을 닫으면 안 된다");
+  });
+  assert.equal(page.busyDialog.open, false);
+});
+
+test("요청이 거절돼도 팝업은 닫힌다 — 안 닫히면 화면이 잠긴 채로 끝난다", async () => {
+  const page = await withHeld({ fail: true }, async (p) => {
+    await wait(PAST_BUSY_THRESHOLD);
+    assert.equal(p.busyDialog.open, true);
+  });
+  assert.equal(page.busyDialog.open, false);
+  // 실패는 실패대로 말한다 — 팝업이 사라진 것이 "잘 됐다" 로 읽히면 안 된다.
+  assert.ok(page.status().length > 0);
+});
+
+test("Esc 로는 안 닫힌다 — 요청은 계속 도는데 화면만 끝난 것처럼 보이게 된다", async () => {
+  await withHeld({}, async (p) => {
+    await wait(PAST_BUSY_THRESHOLD);
+    assert.equal(p.busyDialog.open, true);
+
+    // 브라우저의 Esc 는 cancel 이벤트다. 막지 않으면 그 뒤에 UA 가 팝업을 닫는다.
+    const ev = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    p.busyDialog._on.cancel?.(ev);
+    assert.equal(ev.defaultPrevented, true, "cancel 을 안 막으면 요청이 도는 채로 화면이 열린다");
+    assert.equal(p.busyDialog.open, true);
+  });
+});
+
+test("기다림 팝업의 글자와 옷 — 정적 파일이 정본이다(shim 은 index.html 을 안 읽는다)", () => {
+  const html = publicFile("index.html");
+  assert.match(html, /<dialog id="busy-dialog">/);
+  assert.match(html, /id="busy-text"[^>]*>[^<]+</, "빈 팝업은 '무엇을 기다리나'에 답하지 않는다");
+  assert.match(html, /id="busy-elapsed"/);
+
+  const css = publicFile("style.css").replace(/\/\*[\s\S]*?\*\//g, "");
+  const closed = css.match(/#busy-dialog\s*\{([^}]*)\}/);
+  assert.ok(closed, "#busy-dialog 규칙이 없다");
+  assert.equal(/(^|[;\s])display\s*:/.test(closed[1]), false,
+    "닫힌 팝업에 display 를 주면 화면에 눌러앉는다(.detail·#memo-dialog 와 같은 함정)");
+  assert.ok(/#busy-dialog\[open\]\s*\{[^}]*display:\s*flex/.test(css), "열렸을 때 display 가 없다");
+  // 움직임을 줄여 달라는 기기에서도 **멈추지는 않는다** — 멈춘 스피너는 멈춘 요청으로 읽힌다.
+  const reduced = css.match(/prefers-reduced-motion[^{]*\{([\s\S]*?)\}\s*\n/);
+  assert.ok(reduced && /animation-duration/.test(reduced[1]), "reduced-motion 갈래가 없다");
+  assert.equal(/animation\s*:\s*none/.test(reduced[1]), false, "멈추면 안 된다");
+});

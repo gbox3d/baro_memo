@@ -106,11 +106,17 @@ function makeSelect(options) {
 
 // 경로별 응답. 실제 백엔드의 모양만 맞춘다(version·tokens·memos).
 // 요청은 전부 기록한다 — "몇 번 나갔는가"가 검사할 값인 경우가 있다(중복 발급).
-function makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTotal, teams, teamsMissing }) {
+function makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTotal, teams, teamsMissing, hold = null }) {
   return async (url, options = {}) => {
     const path = String(url);
     const method = options.method || "GET";
     requests.push({ method, path, body: options.body });
+    // **요청이 도는 중**을 만드는 손. 화면이 그 창에만 보이는 것(기다림 팝업)을 재려면 응답을
+    // 붙잡아 둘 수 있어야 한다 — 기록은 먼저 하고 응답만 붙잡는다.
+    //
+    // `on` 을 끄는 갈래가 반드시 있어야 한다. 붙잡힌 응답이 풀리면 그 핸들러가 **후속 요청**을
+    // 띄우는데(loadTokens → renderTokens → …), 그것까지 붙잡히면 검사가 영영 안 끝난다.
+    if (hold?.on) await new Promise((resolve) => hold.queue.push(resolve));
     if (fail) throw new Error("network down");
 
     // 팀 축. teamsMissing 은 0.13.0 이전 백엔드다 — 이 경로만 404 이고 나머지는 멀쩡하다.
@@ -178,7 +184,11 @@ export function loadAdminPage({
   ],
 
   teamsMissing = false,
+  // 응답을 붙잡아 둔다. 켜면 fetch 가 releaseFetch() 를 부를 때까지 안 끝나므로,
+  // page.settled 를 기다리기 **전에** 화면을 볼 수 있다.
+  holdFetch = false,
 } = {}) {
+  const hold = { on: holdFetch, queue: [] };
   const store = new Map(storedTz ? [["baro-memo-tz", storedTz]] : []);
   if (storedSort) store.set("baro-memo-sort", storedSort);
   if (adminToken) store.set("baro-memo-admin-token", adminToken);
@@ -210,6 +220,9 @@ export function loadAdminPage({
   };
   const dialog = makeDialog("#memo-dialog");
   const inviteDialog = makeDialog("#invite-dialog");
+  // 기다림 팝업도 진짜 <dialog> 여야 한다 — 모달인 동안 밖이 inert 라는 것이 이 팝업의 절반이고,
+  // 그 성질은 아래 inertFor 가 흉내 낸다.
+  const busyDialog = makeDialog("#busy-dialog");
   // 메시지 칸은 팝업 **안**에 있다. 이 부모 관계가 없으면 복사 폴백이 어디에 붙는지를
   // 검사가 못 본다(그 자리가 정확히 이번에 깨졌던 곳이다).
   const inviteText = el("textarea");
@@ -248,7 +261,7 @@ export function loadAdminPage({
 
   // 모달이 열려 있으면 그 팝업 밖의 요소는 못 만진다.
   function inertFor(node) {
-    const openDialog = [dialog, inviteDialog].find((d) => d.open);
+    const openDialog = [dialog, inviteDialog, busyDialog].find((d) => d.open);
     if (!openDialog) return false;
     for (let n = node; n; n = n._parent) if (n === openDialog) return false;
     return true;
@@ -262,14 +275,25 @@ export function loadAdminPage({
       setItem: (k, v) => store.set(k, String(v)),
       removeItem: (k) => store.delete(k),
     },
-    fetch: makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTotal, teams, teamsMissing }),
+    fetch: makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTotal, teams, teamsMissing, hold }),
     // 보안 컨텍스트가 아니면 navigator.clipboard 는 **속성 자체가 없다**. undefined 를 넣어
     // 두는 것과 같지만, 실제 브라우저의 모양을 그대로 흉내 낸다.
     navigator: clipboard ? { clipboard: { writeText: async (t) => { copied.push(t); } } } : {},
     window: { getSelection: () => ({ removeAllRanges() {}, addRange(r) { selectedRanges.push(r.node ?? r); } }) },
     confirm: () => false,
     console: { warn() {}, error() {}, log() {} },
-    URL, setTimeout, clearTimeout, queueMicrotask,
+    // setInterval 은 기다림 팝업의 경과 시계가 쓴다. 없으면 app.js 가 그 자리에서 죽는데,
+    // 증상은 "팝업이 안 뜬다" 가 아니라 **모든 요청이 실패한다** 로 나온다(call 안에서 던진다).
+    //
+    // **unref 가 붙는다.** 브라우저의 타이머는 프로세스를 붙잡지 않는데 Node 의 것은 붙잡는다 —
+    // 그 차이 때문에, 페이지가 타이머를 하나 흘리면 검사가 "빨간불" 이 아니라 **"안 끝남"** 으로
+    // 끝난다(러너가 매달리고 원인은 어디에도 안 적힌다). 흘린 타이머는 단언으로 잡을 일이지
+    // 러너를 세울 일이 아니다.
+    URL, queueMicrotask,
+    setTimeout: (fn, ms, ...a) => setTimeout(fn, ms, ...a).unref(),
+    clearTimeout,
+    setInterval: (fn, ms, ...a) => setInterval(fn, ms, ...a).unref(),
+    clearInterval,
   };
 
   runInNewContext(readFileSync(join(publicDir, "app.js"), "utf8"), sandbox, { filename: "app.js" });
@@ -285,7 +309,15 @@ export function loadAdminPage({
     pickTokenRow: (i = 0) => sandbox.document.querySelector("#token-list tbody").children[i]._on.click(),
     pickMemoRow: (i = 0) => sandbox.document.querySelector("#memo-list tbody").children[i]._on.click(),
     pickTeamRow: (i = 0) => sandbox.document.querySelector("#team-list tbody").children[i]._on.click(),
-    dialog, inviteDialog, inviteLang, memoSort,
+    dialog, inviteDialog, busyDialog, inviteLang, memoSort,
+    // 붙잡아 둔 응답을 푼다. `n` 을 주면 그만큼만 풀고 **계속 붙잡는다**(나란한 요청 중 하나만
+    // 끝내는 상황을 만드는 손). 인자 없이 부르면 붙잡기를 끝내고 전부 푼다 — 검사의 마무리는
+    // 늘 이쪽이어야 한다. 안 그러면 풀린 요청의 후속 요청이 다시 붙잡혀 검사가 안 끝난다.
+    releaseFetch: (n) => {
+      if (n === undefined) hold.on = false;
+      hold.queue.splice(0, n ?? hold.queue.length).forEach((r) => r());
+    },
+    heldCount: () => hold.queue.length,
   };
 }
 

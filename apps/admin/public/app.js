@@ -136,18 +136,73 @@ function say(text, isError = false) {
   el.style.color = isError ? "var(--danger)" : "var(--muted)";
 }
 
+// ---- 기다림 ------------------------------------------------------------------------------
+//
+// 네트워크가 도는 동안 화면이 죽은 것처럼 보이지 않게 하고, 그 사이의 클릭을 막는다. 뒤엣것이
+// 절반이다 — 버튼마다 `disabled` 를 걸어 두었지만 그건 그 버튼 하나뿐이고, 느린 왕복에서
+// 조바심이 향하는 곳은 대개 옆의 다른 버튼이다.
+//
+// **문턱을 두는 이유.** 사내망 왕복은 한 자리 ms 다. 매번 띄우면 사람 눈에는 깜빡임만 남고,
+// 그 깜빡임이 정작 느린 요청의 신호를 덮는다. 터널·포워딩으로 들어오는 경로가 이 팝업이
+// 존재하는 이유이고, 그 경로는 이 문턱을 훌쩍 넘는다.
+const BUSY_AFTER_MS = 200;
+// 오래 걸리면 초를 센다. 운영자가 실제로 묻는 것은 "느린가, 멈췄나" 이고, 그 둘은 화면의
+// 숫자가 움직이는지로만 갈린다.
+const BUSY_ELAPSED_AFTER_MS = 3000;
+
+// **불리언이 아니라 세는 값이다.** refresh() 는 네 요청을 나란히 띄우므로, 불리언이면 가장
+// 먼저 끝난 하나가 나머지 셋이 도는 중에 팝업을 닫는다.
+const busy = { inFlight: 0, showAt: null, tick: null, startedAt: 0 };
+
+function busyShow() {
+  const dlg = $("#busy-dialog");
+  $("#busy-elapsed").textContent = "";
+  // showModal 이 없는 옛 판에서는 open 속성만 세워 비모달로 띄운다(본문 팝업과 같은 갈래).
+  if (typeof dlg.showModal === "function") dlg.showModal();
+  else dlg.open = true;
+  busy.tick = setInterval(() => {
+    const ms = Date.now() - busy.startedAt;
+    $("#busy-elapsed").textContent = ms >= BUSY_ELAPSED_AFTER_MS ? `${Math.round(ms / 1000)}초` : "";
+  }, 500);
+}
+
+function busyStart() {
+  busy.inFlight += 1;
+  if (busy.inFlight > 1) return;              // 이미 도는 중 — 시계는 첫 요청의 것이다
+  busy.startedAt = Date.now();
+  busy.showAt = setTimeout(busyShow, BUSY_AFTER_MS);
+}
+
+// **끝은 반드시 온다.** call() 이 finally 에서 부르므로 거절·예외에도 팝업이 남지 않는다 —
+// 남으면 화면이 통째로 잠긴다(모달이라 되돌릴 손이 없다).
+function busyEnd() {
+  busy.inFlight = Math.max(0, busy.inFlight - 1);
+  if (busy.inFlight > 0) return;
+  clearTimeout(busy.showAt); busy.showAt = null;
+  clearInterval(busy.tick); busy.tick = null;
+  const dlg = $("#busy-dialog");
+  if (dlg.open) { if (typeof dlg.close === "function") dlg.close(); else dlg.open = false; }
+}
+
+// Esc 로 닫히면 안 된다. 닫아도 요청은 계속 도는데 화면은 끝난 것처럼 보이고, 그 상태에서
+// 누른 버튼이 두 번째 요청이 된다 — 이 팝업이 막으려던 바로 그 일이다.
+$("#busy-dialog").addEventListener("cancel", (e) => e.preventDefault());
+
 async function call(path, { method = "GET", body } = {}) {
-  const res = await fetch(new URL(path, API), {
-    method,
-    headers: {
-      ...(body ? { "content-type": "application/json" } : {}),
-      ...(tokenInput.value.trim() ? { "x-memo-token": tokenInput.value.trim() } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { code: data.code, status: res.status });
-  return data;
+  busyStart();
+  try {
+    const res = await fetch(new URL(path, API), {
+      method,
+      headers: {
+        ...(body ? { "content-type": "application/json" } : {}),
+        ...(tokenInput.value.trim() ? { "x-memo-token": tokenInput.value.trim() } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { code: data.code, status: res.status });
+    return data;
+  } finally { busyEnd(); }
 }
 
 // ---- 토큰 ------------------------------------------------------------------------------

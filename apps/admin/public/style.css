@@ -80,6 +80,27 @@ td .st { font-size: 12px; }
 .st.done, .st.revoked { color: var(--muted); }
 .st.active { color: var(--ok); }
 
+/* 기다림 팝업. 모달이라 배경 클릭이 막히는 것이 이 팝업의 절반이다.
+   여기서도 display 는 **열렸을 때만** 준다 — 아래 본문 팝업과 같은 함정이다. */
+#busy-dialog {
+  padding: 14px 18px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--fg);
+}
+#busy-dialog[open] { display: flex; align-items: center; gap: 10px; }
+/* 가림막은 옅게. 이 팝업은 "막는다"가 아니라 "기다린다"를 말하는 자리라, 본문 팝업(.5)만큼
+   어둡게 하면 뒤가 안 보여서 무엇을 기다리는지 맥락을 잃는다. */
+#busy-dialog::backdrop { background: rgba(0, 0, 0, .2); }
+#busy-elapsed { color: var(--muted); font-variant-numeric: tabular-nums; }
+.spinner {
+  width: 14px; height: 14px; flex: 0 0 auto; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+/* 움직임을 줄여 달라고 한 기기에서는 **멈추지 않고 느리게** 돈다. 멈춘 스피너는 "멈춘 요청"
+   으로 읽히는데, 그건 이 팝업이 말하려던 것의 정반대다. */
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
 /* 본문 팝업. 화면의 80% 를 차지하고, 머리(제목·닫기)는 붙박이고 본문만 구른다.
    display 는 **열렸을 때만** 준다 — `dialog:not([open])` 의 숨김도 UA 규칙이라, 그냥
    `#memo-dialog { display: flex }` 로 두면 닫힌 팝업이 화면에 눌러앉는다(.detail 과 같은 함정). */
