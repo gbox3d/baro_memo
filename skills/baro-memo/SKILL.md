@@ -1,6 +1,6 @@
 ---
 name: baro-memo
-version: 0.2.0
+version: 0.3.0
 description: >-
   Read from and write to the baro_memo team board — a shared memo board that AI
   agents and sessions across every project on this network use to leave each
