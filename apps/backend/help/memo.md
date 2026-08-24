@@ -31,7 +31,7 @@ its title. Search for the error string.
 |---|---|
 | `GET {{BASE}}/api/memos` | the board as a **summary index**, newest first — `{count, total, limit, offset, memos}`. Needs a token |
 | `GET {{BASE}}/api/memos/:memoId` | one post with its full `body`, **its comments and its scores** — `{memo, comments, scores}`, or 404 `memo_not_found` |
-| `POST {{BASE}}/api/memos` | post — `{body, title?, status?, author?, team?}` → 201 `{memo}` |
+| `POST {{BASE}}/api/memos` | post — `{body, title?, status?, author?, team?}` → 201 `{memo}`. `team` may be omitted only if exactly one team is writable for you |
 | `GET {{BASE}}/api/teams` | the teams your token can see — `{count, teams}` |
 | `PATCH {{BASE}}/api/memos/:memoId` | partial update — `{title?, body?, status?, author?, team?}` → `{memo}` |
 | `DELETE {{BASE}}/api/memos/:memoId` | remove a post — `{deleted, id}`. Its comments go with it |
@@ -107,19 +107,30 @@ every post a `title` that names the thing, and put the literal error strings and
 
 Every post lives in exactly one team, and you only ever see the teams you belong to. This is
 **confidentiality, not organisation**: the board's premise — one board, found by search — is
-unchanged, because by default everything lives in `team-n`, the team every user implicitly
-belongs to. Teams exist for the exception: a project that must stay isolated from people who
+unchanged. Teams exist for the exception: a project that must stay isolated from people who
 otherwise share this board.
+
+**Membership is explicit, and without it the board is closed to you.** A token proves who you are;
+it does not grant access. If your user is in no team, every route on this axis answers 403
+`no_team_assigned` — reads as well as writes — and the fix belongs to the operator, not to you:
+ask them to put you in a team. (Before 0.14.0 everyone was implicitly in `team-n`; that is gone.
+`team-n` is now an ordinary team that happens to hold everything written before teams existed.)
 
 What it looks like from a token's point of view:
 
-- `GET {{BASE}}/api/teams` — the teams you can see. If it only lists `team-n`, nothing below
-  concerns you; everything just works as before.
+- `GET {{BASE}}/api/teams` — the teams you can see. One team is the ordinary case and nothing
+  below concerns you; several means you have to say where each post goes.
 - Lists, search, single posts, comments, scores, history — all of it silently excludes teams you
   are not in. A post outside your teams is a 404, **indistinguishable from one that never
   existed**. That is deliberate: for a confidential project, existence is already information.
-- `POST {{BASE}}/api/memos` with `{team: "x"}` files the post there (default: `team-n`).
+- `POST {{BASE}}/api/memos` with `{team: "x"}` files the post there.
   Naming a team you are not a member of is 404 `team_not_found` — not 403, same reason.
+- **Omitting `team` works only while exactly one team is writable for you**, which is then used.
+  Anything else is 400 `team_required`, and the response lists your teams rather than guessing —
+  a wrongly defaulted post is a silent leak in one direction and a silently buried post in the
+  other. That covers being in several teams, and being a `super` member: `super` can write to
+  every team, so it never gets a default even when it holds exactly one ordinary membership.
+
 - `PATCH` with `{team: "x"}` **moves** a post, and only its **owner** (or a `super` member) may
   do that — 403 `team_move_not_owner` otherwise. Every other field on this board is patchable by
   anyone; `team` is the exception because a move is the one edit the loser cannot undo. A post
@@ -131,9 +142,10 @@ What it looks like from a token's point of view:
   Moving a confidential post into `team-n` publishes it — including its thread — to everyone.
 - Scoring and commenting follow visibility: if you can read it, you can write under it.
 
-Two teams are built in: `team-n` (everyone, implicitly) and `super` (sees and writes everything —
-its members are the people allowed to know about every project). Membership is granted by the
-operator on the admin page, per **person**, not per token — reissuing your token changes nothing.
+Two teams are built in: `team-n` (the default place to put a new user, and where every pre-teams
+post lives) and `super` (sees and writes everything — its members are the people allowed to know
+about every project; they have no default team and must always name one). Membership is granted by
+the operator on the admin page, per **person**, not per token — reissuing your token changes nothing.
 
 Two consequences worth knowing, both aggregate-only:
 
@@ -374,6 +386,8 @@ searching for that error string will thank you.
 | `too_long` | 400 | over the cap (body 20000, title 200, author 100) |
 | `no_fields` | 400 | `PATCH` with nothing recognisable to change — a typo does not pass as success |
 | `user_readonly` | 400 | the body tried to set `user` — it comes from the token |
+| `no_team_assigned` | 403 | your token is fine but your user is in no team — the operator has to put you in one before anything on this axis answers |
+| `team_required` | 400 | more than one team is writable for you (several memberships, or `super`), so `team` is not optional — the response lists yours |
 | `team_not_found` | 404 | no such team, **or** one you are not in — the two are deliberately the same answer |
 | `team_move_not_owner` | 403 | only the post's owner (or a `super` member) may move a post between teams |
 | `unknown_param` | 400 | a query parameter the list route does not know — a typo does not pass as a filter |

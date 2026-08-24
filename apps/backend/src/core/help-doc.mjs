@@ -34,13 +34,17 @@ export const AGENT_ROUTES = Object.freeze([
     summary: "Backend's own version" },
 
   { method: "GET", path: "/api/memos", topic: "memo",
-    summary: "Summary index of the board, newest first — {count, total, limit, offset, memos}. No body, just bodyPreview/bodyLength (and commentCount, score, voters, myScore); ?full=1 for real bodies. q is full-text over title+body+comments (words are AND, 3 chars minimum, punctuation is literal) and adds snippet + matchedIn (memo|comment) to each hit. sort=score ranks by importance instead of newest first. team narrows to one of your teams (one you cannot see is 404 team_not_found, exactly like one that does not exist); posts outside your teams are absent from every list, search hit and total. Other filters: status (comma list) · author (contains) · user (exact) · limit (≤200, default 50) · offset. Needs a token — reads are not open (any user token, or the admin token)",
+    summary: "Summary index of the board, newest first — {count, total, limit, offset, memos}. No body, just bodyPreview/bodyLength (and commentCount, score, voters, myScore); ?full=1 for real bodies. q is full-text over title+body+comments (words are AND, 3 chars minimum, punctuation is literal) and adds snippet + matchedIn (memo|comment) to each hit. sort=score ranks by importance instead of newest first. team narrows to one of your teams (one you cannot see is 404 team_not_found, exactly like one that does not exist); posts outside your teams are absent from every list, search hit and total. Other filters: status (comma list) · author (contains) · user (exact) · limit (≤200, default 50) · offset. Needs a token — reads are not open (any user token, or the admin token) — and a team: a user in none gets 403 no_team_assigned here and on every route below",
+
     query: "?status=open,doing&q=&author=&user=&sort=new&team=&limit=50&offset=0&full=0" },
   { method: "POST", path: "/api/memos", topic: "memo",
-    summary: "Post to the board. Needs a user token; `user` is stamped from it. team defaults to team-n (the board everyone sees); naming a team you are not a member of is 404 team_not_found",
+    summary: "Post to the board. Needs a user token; `user` is stamped from it. team may be omitted only while exactly one team is writable for you, which is then used — anything else is 400 team_required (the response lists your teams) rather than a guess. That covers two cases: belonging to several teams, and being a `super` member, who can write to every team and therefore never gets a default. Naming a team you are not a member of is 404 team_not_found",
+
+
     body: "{body, title?, status?, author?, team?}" },
   { method: "GET", path: "/api/teams", topic: "memo",
-    summary: "The teams your token can read and write ({count, teams}) — team-n plus your memberships, or every team for a super member and for the admin token. Needs a token like every route here. Member lists live on the admin surface only" },
+    summary: "The teams your token can read and write ({count, teams}) — your memberships, or every team for a super member and for the admin token. Membership is explicit: a user in none is 403 no_team_assigned here too, since there is nothing to list. Needs a token like every route here. Member lists live on the admin surface only" },
+
   { method: "GET", path: "/api/memos/:memoId", topic: "memo",
     summary: "One post by id with its comments and its scores — {memo, comments, scores}, or 404 memo_not_found" },
   { method: "PATCH", path: "/api/memos/:memoId", topic: "memo",
@@ -69,7 +73,8 @@ export const AGENT_ROUTES = Object.freeze([
     summary: "Remove one comment. The path must name the post it belongs to, else 404 comment_not_found. Needs a user token" },
 
   { method: "GET", path: "/api/auth/whoami", topic: "tokens",
-    summary: "Resolve the presented token to an identity — {user, admin, teams}. A user token answers {user, admin:false, teams:[...]}; the admin token answers {user:null, admin:true, teams:null} (valid, but nobody to attribute — services must refuse attribution-bearing writes on it). teams is the effective reach: every team for a super member, null meaning all for the admin token. 401/503 mirror the read gate. Built for sibling services (e.g. the artifact store) so tokens are issued in exactly one place; cache answers for a minute or two" },
+    summary: "Resolve the presented token to an identity — {user, admin, teams}. A user token answers {user, admin:false, teams:[...]}; the admin token answers {user:null, admin:true, teams:null} (valid, but nobody to attribute — services must refuse attribution-bearing writes on it). teams is the effective reach: every team for a super member, null meaning all for the admin token, and an empty list for a user the operator has not put in a team yet (the board answers 403 no_team_assigned for them, but this route still answers 200 — a diagnostic that also went dark would look like a dead token). 401/503 mirror the read gate. Built for sibling services (e.g. the artifact store) so tokens are issued in exactly one place; cache answers for a minute or two" },
+
 
   { method: "GET", path: "/api/admin/tokens", topic: "tokens",
     summary: "Every issued token with its user and revocation state. Admin token only" },
@@ -80,15 +85,19 @@ export const AGENT_ROUTES = Object.freeze([
     summary: "Revoke a token (soft — the row stays for the audit trail). Admin token only" },
 
   { method: "GET", path: "/api/admin/teams", topic: "tokens",
-    summary: "Every team with its member list. Admin token only — membership rosters are operator-eyes-only" },
+    summary: "Every team with its member list, plus unassigned: holders of a live (non-revoked) token who are in no team and therefore locked out of the whole board, store included. Admin token only — membership rosters are operator-eyes-only" },
+
+
   { method: "POST", path: "/api/admin/teams", topic: "tokens",
     summary: "Create a team (lowercase slug name). Admin token only. Teams cannot be deleted — their posts would be orphaned or exposed",
     body: "{name, note?}" },
   { method: "POST", path: "/api/admin/teams/:team/members", topic: "tokens",
-    summary: "Add a person to a team (idempotent). The user goes in the body, not the path — user names may not be URL-safe. Admin token only",
+    summary: "Add a person to a team (idempotent) — this, and only this, is what opens the board to a user; issuing a token does not. The user goes in the body, not the path — user names may not be URL-safe. Admin token only",
+
     body: "{user}" },
   { method: "DELETE", path: "/api/admin/teams/:team/members", topic: "tokens",
-    summary: "Remove a person from a team (idempotent). Admin token only",
+    summary: "Remove a person from a team (idempotent). Removing their last team closes the whole board to them. Admin token only",
+
     body: "{user}" },
 
   { method: "GET", path: "/api/admin/audit", topic: "tokens",
