@@ -11,15 +11,15 @@
 // 안다 — 400 으로 정확히 거절한다(빈 PATCH 를 no_fields 로 거절하는 것과 같은 결).
 //
 // 거절은 원인마다 상태가 다르다. 고칠 사람이 다르기 때문이다:
-//   503 no_tokens_issued  — 발급된 토큰이 0개. 어떤 값을 넣어도 안 된다. 관리자가 발급해야 한다.
+//   503 no_tokens_issued   — 발급된 토큰이 0개. 어떤 값을 넣어도 안 된다. 관리자가 발급해야 한다.
 //   401 memo_token_invalid — 토큰들이 있는데 네 것이 아니다. 부르는 쪽이 고친다.
+//   403 no_team_assigned   — 토큰은 유효한데 소속이 없다(0.14.0). 운영자가 팀에 넣어야 한다.
 //
 // 반환 규약: 이 축의 경로가 아니면 null.
 import { json } from "../core/http.mjs";
 import { LIST_LIMIT, MEMO_SORTS, MEMO_STATUSES, toMemoId } from "./memo-store.mjs";
 import { toCommentId } from "./comment-store.mjs";
 import { isAdminToken } from "../core/admin-token.mjs";
-import { DEFAULT_TEAM } from "../auth/team-store.mjs";
 
 // 헤더 두 곳: 전용 `x-memo-token` 과 표준 `Authorization: Bearer`. 도구 사정이다 — 일부
 // 클라이언트는 Authorization 을 자기 인증에 이미 쓴다.
@@ -144,7 +144,21 @@ export function createMemoRoutes(ctx) {
     // 이 사람에게 보이는 팀 — null 은 "전부"(운영자·super). 이 아래의 모든 읽기·쓰기가
     // 이 값 하나로 걸러진다. 경로마다 따로 계산하면 언젠가 한 경로가 빠진다.
     const visible = teamStore.visibleTeams(user || "", { operator: operator || user === null });
+    // 소속이 없으면 보드도 없다 (0.14.0). 토큰 발급과 접근 허가가 두 동작으로 갈렸고, 여기가
+    // 두 번째 문이다 — **읽기까지** 닫힌다.
+    //
+    // 빈 목록으로 답하지 않는다. 격리가 404 를 쓰는 이유는 "안 보이는 글"과 "없는 글"이
+    // 구분되면 안 되기 때문인데, 소속 없는 사용자에게는 애초에 감출 글이 없다. 이 사람이
+    // 알아야 할 사실은 "팀 하나를 받으면 된다" 하나이고, 200 빈 보드는 그 대신 "보드가 비었다"고
+    // 거짓말한다. 고칠 사람이 운영자라는 점에서 no_tokens_issued 와 같은 결이다.
+    if (visible !== null && visible.length === 0) {
+      return json(403, {
+        error: "Your user belongs to no team, so this board has nothing for you — reads as well as writes. Ask the operator to put you in one (admin page, Teams).",
+        code: "no_team_assigned", retryable: false,
+      });
+    }
     const canSee = (team) => visible === null || visible.includes(team);
+
     // 보이는 메모만 돌려준다 — 안 보이는 메모는 **없는 메모와 같은 404** 다. 403 은 "있긴
     // 하다"를 말해 주는데, 비밀 프로젝트는 존재 자체가 비밀이다.
     const seen = (id, viewer = "") => {
@@ -208,8 +222,20 @@ export function createMemoRoutes(ctx) {
       // 존재를 말하지 않는다(404) — 어느 팀에 못 쓰는지의 목록이 곧 팀 목록이 되기 때문이다.
       // null 은 undefined 와 같이 "안 골랐다"로 읽는다 — 많은 클라이언트가 빈 칸을 null 로
       // 직렬화하고, 그것을 404 로 거절하면 팀을 안 쓰는 사람이 팀 때문에 막힌다.
-      const team = body?.team == null ? DEFAULT_TEAM : String(body.team).trim();
+      //
+      // 안 골랐을 때 **서버가 대신 고르는 것은 소속이 하나뿐일 때까지**다(0.14.0). 예전 기본값
+      // team-n 은 "전원이 team-n 소속" 위에서만 성립하던 값이다. 여럿에 속한 사람 대신 서버가
+      // 하나를 고르면 그 실수는 조용하다 — 비밀 글이 공개 팀에 올라가든 반대든, 잘못 골랐다는
+      // 신호가 어디에도 뜨지 않는다.
+      const team = body?.team == null ? teamStore.defaultTeamFor(user) : String(body.team).trim();
+      if (team === null) {
+        return json(400, {
+          error: 'Name the team this post belongs to ({"team": "..."}) — you can write to more than one, so there is no default.',
+          code: "team_required", teams: visible ?? teamStore.list().map((t) => t.name), retryable: false,
+        });
+      }
       if (!team || !teamStore.get(team) || !teamStore.canPost(user, team)) return teamNotFound(body?.team);
+
       try { return json(201, { memo: memoStore.create(body, user, team) }); }
       catch (error) { return badRequest(error); }
     }

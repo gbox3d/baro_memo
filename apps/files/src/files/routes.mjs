@@ -24,6 +24,9 @@ function refusal(verdict) {
   const messages = {
     memo_token_invalid: "The store needs a board token — header x-memo-token or Authorization: Bearer. Ask the operator for one.",
     no_tokens_issued: "No tokens have been issued on the board — ask the operator.",
+    // 보드의 규칙이 이 축까지 온 것이다(0.14.0). 이 앱은 팀을 모르고, 판정을 주는 쪽이 얹는다.
+    no_team_assigned: "Your user belongs to no team on the board, so this store is closed to you too — reads as well as publishing. Ask the operator to put you in one.",
+
     // 0.11.0 부터 정체성은 같은 프로세스의 함수라 "닿지 않음" 이 없다. 표를 남겨 두는 이유는
     // 판정이 다시 프로세스 밖으로 나갈 수 있어서다 — 그때 이 문장이 없으면 코드가 맨 "Refused."
     // 를 답하고, 부르는 쪽은 재시도하면 되는 일인지조차 모른다.

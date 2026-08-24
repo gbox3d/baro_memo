@@ -32,3 +32,31 @@ export function createVerdict({ tokenStore, adminToken = "" }) {
     };
   };
 }
+
+/**
+ * 판정 위에 **팀 문턱**을 얹는다 — 아티팩트 저장소가 쓰는 모양이다 (0.14.0).
+ *
+ * 정체성은 위의 한 벌이 정본이고 거기에 팀은 없다: 팀은 보드의 개념이라 apps/files 에는
+ * "team" 이라는 낱말조차 나오지 않는다. 그런데 0.14.0 이 "소속 없으면 아무것도 없다"를
+ * 약속하는 순간, 얹지 않으면 그 문장이 **배포의 절반에만 참**이 된다 — 관리자 페이지는
+ * "이 사람들에게 보드는 닫혀 있습니다" 라고 적는데 같은 토큰으로 이 배포의 아티팩트 전부를
+ * 목록·다운로드하고 발행까지 한다(`/api/files/verify` 가 nginx auth_request 의 허가 자리다).
+ *
+ * 그래서 규칙만 여기서 합치고 판정은 늘리지 않는다. 관리자 토큰은 그대로 통과한다 —
+ * 운영자에게는 소속이라는 개념이 없고(visibleTeams 가 null), 그 값에는 찍을 사람도 없다.
+ */
+export function withTeamGate(resolve, teamStore) {
+  if (!teamStore) throw new Error("withTeamGate: teamStore is required — the gate fails open without it.");
+  return function resolveWithTeam(token) {
+    const v = resolve(token);
+    if (!v.ok || v.user === null) return v;
+    const teams = teamStore.visibleTeams(v.user);
+    if (teams !== null && teams.length === 0) {
+      return {
+        ok: false, status: 403, code: "no_team_assigned",
+        error: "Your user belongs to no team on the board, so this store is closed to you too. Ask the operator to put you in one.",
+      };
+    }
+    return v;
+  };
+}

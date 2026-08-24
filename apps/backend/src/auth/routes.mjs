@@ -26,6 +26,11 @@ export function createAuthRoutes(ctx) {
       // 집합이다. 소속 표(teamsOf)를 그대로 쓰면 super 구성원이 어긋난다 — 그 사람의 소속
       // 행은 두 개인데 실제로는 모든 팀에 쓸 수 있어서, 이 값을 믿는 에이전트가 자기 권한을
       // 실제보다 좁게 안다. 관리자 토큰은 사람이 없으므로 null("전부").
+      //
+      // **빈 배열은 "보드에 접근이 없다"** 이고(0.14.0), 이 라우트는 그때도 200 이다 —
+      // 보드 축이 403 no_team_assigned 로 닫히는 것과 다르다. 여기는 "내 토큰이 뭐로 읽히나"에
+      // 답하는 진단 표면이라, 진단까지 닫으면 사용자는 토큰이 죽은 것과 구분할 수 없다.
+
       const teams = teamStore
         ? (v.user === null ? null : (teamStore.visibleTeams(v.user) ?? teamStore.list().map((t) => t.name)))
         : undefined;

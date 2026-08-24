@@ -13,7 +13,7 @@ import { VoteStore } from "../src/memo/vote-store.mjs";
 import { AuditStore } from "../src/memo/audit-store.mjs";
 import { TokenStore } from "../src/auth/token-store.mjs";
 import { TeamStore, DEFAULT_TEAM, SUPER_TEAM } from "../src/auth/team-store.mjs";
-import { createVerdict } from "../src/auth/verdict.mjs";
+import { createVerdict, withTeamGate } from "../src/auth/verdict.mjs";
 import { createMemoRoutes } from "../src/memo/routes.mjs";
 import { createAdminRoutes } from "../src/admin/routes.mjs";
 import { createAuthRoutes } from "../src/auth/routes.mjs";
@@ -21,6 +21,10 @@ import { createAuthRoutes } from "../src/auth/routes.mjs";
 const ADMIN = "adm_team_test";
 
 // 보드 하나를 세운다: 대표(boss)는 secret 팀, 이사(exec)는 super, 사원(staff)은 기본팀만.
+//
+// **소속은 전부 행으로 만든다**(0.14.0). 0.13.x 에서는 team-n 이 암묵이라 여기 없었고, 그
+// 없음이 곧 "토큰만 있으면 보드 전체"였다. 지금은 넣지 않은 사람이 아무것도 못 본다 —
+// 그 상태 자체를 재는 검사는 아래 「소속 없는 사용자」 구획에 따로 있다.
 function rig() {
   const db = openDb(":memory:");
   const memoStore = new MemoStore(db);
@@ -32,7 +36,10 @@ function rig() {
   const verdict = createVerdict({ tokenStore, adminToken: ADMIN });
 
   const tokens = {};
-  for (const u of ["boss", "exec", "staff"]) tokens[u] = tokenStore.issue({ user: u }).token;
+  for (const u of ["boss", "exec", "staff"]) {
+    tokens[u] = tokenStore.issue({ user: u }).token;
+    teamStore.addMember(DEFAULT_TEAM, u);
+  }
   teamStore.create({ name: "secret", note: "비밀 프로젝트" });
   teamStore.addMember("secret", "boss");
   teamStore.addMember(SUPER_TEAM, "exec");
@@ -42,7 +49,7 @@ function rig() {
   const authRoutes = createAuthRoutes({ verdict, teamStore });
   const as = (who) => ({ "x-memo-token": who === "admin" ? ADMIN : tokens[who] });
   return {
-    db, memoStore, commentStore, voteStore, teamStore, tokens, as,
+    db, memoStore, commentStore, voteStore, teamStore, tokenStore, tokens, as,
     memo: (m, p, body, who, query = null) => memoRoutes(m, p, query, body, as(who)),
     admin: (m, p, body) => adminRoutes(m, p, null, body, { "x-memo-token": ADMIN }),
     auth: (who) => authRoutes("GET", "/api/auth/whoami", null, {}, as(who)),
@@ -62,15 +69,23 @@ test("내장 둘은 늘 있고 지워졌어도 되살아난다 — 존재가 코
   assert.ok(new TeamStore(db).get(SUPER_TEAM), "재기동(재생성)이 내장을 다시 심어야 한다");
 });
 
-test("소속은 사람의 것 — 기본팀은 행 없이 암묵이고, 행으로 만드는 것은 거절된다", () => {
+test("소속은 사람의 것이고 행이 전부다 — 기본팀도 예외가 아니다 (0.14.0)", () => {
   const { teamStore } = rig();
-  assert.deepEqual(teamStore.teamsOf("staff"), [DEFAULT_TEAM], "아무 행이 없어도 기본팀 소속이다");
-  assert.deepEqual(teamStore.teamsOf("boss"), [DEFAULT_TEAM, "secret"]);
-  assert.throws(() => teamStore.addMember(DEFAULT_TEAM, "staff"), { code: "default_team_implicit" },
-    "암묵 소속에 행이 생기면 규칙이 두 벌이 된다");
+  assert.deepEqual(teamStore.teamsOf("staff"), [DEFAULT_TEAM]);
+  assert.deepEqual(teamStore.teamsOf("boss"), ["secret", DEFAULT_TEAM]);
+  // 행이 없는 사람은 아무 팀에도 없다. 0.13.x 에서는 여기가 [DEFAULT_TEAM] 이었고, 그 한 줄이
+  // "토큰을 받은 사람은 곧 보드 전체를 받는다"의 정체였다.
+  assert.deepEqual(teamStore.teamsOf("newcomer"), []);
+  // 기본팀에 넣는 것이 이제 정상 동작이다 — 그것이 사람에게 보드를 여는 유일한 손이다.
+  assert.equal(teamStore.addMember(DEFAULT_TEAM, "newcomer"), true);
+  assert.deepEqual(teamStore.teamsOf("newcomer"), [DEFAULT_TEAM]);
   // 멱등 — 재클릭이 에러가 아니다.
+  assert.equal(teamStore.addMember(DEFAULT_TEAM, "newcomer"), false);
   assert.equal(teamStore.addMember("secret", "boss"), false);
   assert.equal(teamStore.removeMember("secret", "nobody"), false);
+  // 빼는 것도 대칭이다 — 기본팀에서 빼면 그 사람은 보드를 잃는다.
+  assert.equal(teamStore.removeMember(DEFAULT_TEAM, "newcomer"), true);
+  assert.deepEqual(teamStore.teamsOf("newcomer"), []);
 });
 
 test("팀 이름은 슬러그다 — URL 에 실리는 값이라 여기서 걸러야 한다", () => {
@@ -87,6 +102,8 @@ test("visibleTeams: null 만이 전부다 — super 와 운영자", () => {
   assert.equal(teamStore.visibleTeams("exec"), null, "super 는 전부");
   assert.equal(teamStore.visibleTeams("", { operator: true }), null, "운영자는 전부");
   assert.deepEqual(teamStore.visibleTeams("staff"), [DEFAULT_TEAM]);
+  // 빈 배열은 null 이 아니다 — 섞이면 소속 없는 사용자가 보드를 통째로 얻는다.
+  assert.deepEqual(teamStore.visibleTeams("newcomer"), []);
 });
 
 // ---- 격리 — 글 하나가 밖에서 보이는 모든 표면 ------------------------------------------------
@@ -176,10 +193,19 @@ test("팀 이동: 목적지 소속이 필요하고, 비밀→기본팀 이동은
   assert.equal(hide.status, 404);
 });
 
-test("작성: 팀 지정은 소속이 있어야 하고, 기본은 team-n 이다", async () => {
+test("작성: 팀 지정은 소속이 있어야 하고, 기본은 소속이 하나일 때만 있다 (0.14.0)", async () => {
   const { memo } = rig();
+  // 소속이 하나면 서버가 그 팀으로 보낸다 — 팀을 안 쓰는 사람의 호출이 그대로 돈다.
   const plain = await memo("POST", "/api/memos", { body: "b" }, "staff");
   assert.equal(plain.json.memo.team, DEFAULT_TEAM);
+
+  // 둘 이상이면 서버가 대신 고르지 않는다. 잘못 고른 기본값은 조용하고, 조용한 쪽이 비밀
+  // 프로젝트를 공개 팀에 올린다 — 400 으로 되물어야 그 실수가 눈에 걸린다.
+  const ambiguous = await memo("POST", "/api/memos", { body: "b" }, "boss");
+  assert.equal(ambiguous.status, 400);
+  assert.equal(ambiguous.json.code, "team_required");
+  assert.deepEqual([...ambiguous.json.teams].sort(), ["secret", DEFAULT_TEAM].sort(),
+    "되물으면서 고를 수 있는 이름을 함께 준다 — 한 번 더 왕복하지 않게");
 
   assert.equal((await memo("POST", "/api/memos", { body: "b", team: "secret" }, "staff")).status, 404);
   assert.equal((await memo("POST", "/api/memos", { body: "b", team: "ghost" }, "boss")).status, 404);
@@ -207,7 +233,8 @@ test("/api/teams 는 자기에게 보이는 팀까지만 — 명단은 어디에
   assert.deepEqual(staff.json.teams.map((t) => t.name), [DEFAULT_TEAM]);
 
   const boss = await memo("GET", "/api/teams", {}, "boss");
-  assert.deepEqual(boss.json.teams.map((t) => t.name), [DEFAULT_TEAM, "secret"]);
+  // 이름순이다 — 0.13.x 는 기본팀을 늘 맨 앞에 끼워 넣었고, 그 자리가 암묵 소속의 흔적이었다.
+  assert.deepEqual(boss.json.teams.map((t) => t.name), ["secret", DEFAULT_TEAM]);
   assert.ok(boss.json.teams.every((t) => t.members === undefined), "명단은 관리자 축의 것이다");
 
   const all = await memo("GET", "/api/teams", {}, "exec");
@@ -217,7 +244,7 @@ test("/api/teams 는 자기에게 보이는 팀까지만 — 명단은 어디에
 
 test("whoami 가 소속을 싣는다 — 에이전트가 어디에 쓸 수 있는지 한 번에 안다", async () => {
   const { auth } = rig();
-  assert.deepEqual((await auth("boss")).json.teams, [DEFAULT_TEAM, "secret"]);
+  assert.deepEqual((await auth("boss")).json.teams, ["secret", DEFAULT_TEAM]);
   assert.deepEqual((await auth("staff")).json.teams, [DEFAULT_TEAM]);
   assert.equal((await auth("admin")).json.teams, null, "운영자에게 소속은 없다 — 전부다");
 });
@@ -243,6 +270,9 @@ test("관리자 축: 생성·명단·구성원 넣고 빼기, 그리고 그 축�
   const list = await admin("GET", "/api/admin/teams", {});
   const names = list.json.teams.map((t) => t.name);
   assert.ok(names.includes(DEFAULT_TEAM) && names.includes(SUPER_TEAM) && names.includes("lab-x"));
+  // 기본팀의 명단도 이제 행이다 — "전원"이라는 특례가 사라졌다.
+  assert.deepEqual(list.json.teams.find((t) => t.name === DEFAULT_TEAM).members,
+    ["boss", "exec", "staff"]);
 
   assert.equal((await admin("POST", "/api/admin/teams/ghost/members", { user: "x" })).status, 404);
 });
@@ -289,7 +319,8 @@ test("0.13.0 이전 DB 에 열이 얹히고, 기존 글은 전부 기본팀이 �
 
 test("비밀 팀으로 옮긴 사실이 이력으로 새지 않는다 — 이력의 팀은 도착지다", async () => {
   const { memo } = rig();
-  const { json: made } = await memo("POST", "/api/memos", { title: "public plan", body: "everyone" }, "boss");
+  const { json: made } = await memo("POST", "/api/memos",
+    { title: "public plan", body: "everyone", team: DEFAULT_TEAM }, "boss");
   const id = made.memo.id;
   await memo("PATCH", `/api/memos/${id}`, { team: "secret" }, "boss");
 
@@ -401,7 +432,7 @@ test("이력의 세 상태가 한 답으로 무너진다 — 이동·이동 후 
   const { memo } = rig();
   // boss 의 공개 글에 공개 상태의 수정 한 번(team-n 스탬프 줄이 쌓인다) — 이게 옛 누출의 재료였다.
   const seed = async (body) => {
-    const { json } = await memo("POST", "/api/memos", { body }, "boss");
+    const { json } = await memo("POST", "/api/memos", { body, team: DEFAULT_TEAM }, "boss");
     await memo("PATCH", `/api/memos/${json.memo.id}`, { status: "doing" }, "boss");
     return json.memo.id;
   };
@@ -434,7 +465,7 @@ test("이력의 세 상태가 한 답으로 무너진다 — 이동·이동 후 
 
 test("공개로 나온 글은 공개 이후의 이력만 보인다 — 비밀 시절에 누가 손댔는지는 그 팀의 것", async () => {
   const { memo } = rig();
-  const { json: made } = await memo("POST", "/api/memos", { body: "b" }, "boss");
+  const { json: made } = await memo("POST", "/api/memos", { body: "b", team: DEFAULT_TEAM }, "boss");
   const id = made.memo.id;
   await memo("PATCH", `/api/memos/${id}`, { team: "secret" }, "boss");
   await memo("PATCH", `/api/memos/${id}`, { title: "edited while confidential" }, "boss");
@@ -467,4 +498,238 @@ test("잘못 친 팀 이름은 '없는 팀'이지 '없는 경로'가 아니다 �
   for (const method of ["POST", "DELETE"]) {
     assert.equal((await admin(method, "/api/admin/teams/secret/members", { user: "  " })).json.code, "empty_user", method);
   }
+});
+
+// ---- 소속 없는 사용자 (v0.14.0) --------------------------------------------------------------
+//
+// 0.13.x 의 규칙은 "토큰을 받으면 보드를 받는다"였다. 그 규칙이 뒤집혔으므로, 검사의 무게는
+// **한 곳도 빠짐없이 닫혔는가**에 실린다 — 격리와 달리 이 문턱은 라우터 첫머리의 한 줄이라,
+// 한 경로만 그 줄 앞에 서 있어도 통째로 새는 종류의 결함이 된다.
+
+// 토큰은 있고 팀은 없는 사람. 발급만 하고 아무 팀에도 넣지 않은, 새 사용자의 정확한 모양이다.
+function withNewcomer() {
+  const r = rig();
+  const token = r.tokenStore.issue({ user: "newcomer" }).token;
+  const call = (m, p, body = {}, query = null) => r.memo(m, p, body, "__newcomer__", query);
+  // rig 의 as() 는 이름으로 토큰을 찾는다 — 새 사람을 그 표에 끼워 넣는다.
+  r.tokens.__newcomer__ = token;
+  return { ...r, token, call };
+}
+
+test("소속이 없으면 읽기도 쓰기도 없다 — 표면 전부가 403 no_team_assigned", async () => {
+  const { call, memo } = withNewcomer();
+  const { json: made } = await memo("POST", "/api/memos", { body: "visible to staff" }, "staff");
+  const id = made.memo.id;
+
+  const surfaces = [
+    ["GET", "/api/memos"], ["POST", "/api/memos", { body: "b" }],
+    ["GET", "/api/teams"],
+    ["GET", `/api/memos/${id}`], ["PATCH", `/api/memos/${id}`, { status: "done" }],
+    ["DELETE", `/api/memos/${id}`],
+    ["GET", `/api/memos/${id}/comments`], ["POST", `/api/memos/${id}/comments`, { body: "b" }],
+    ["DELETE", `/api/memos/${id}/comments/1`],
+    ["GET", `/api/memos/${id}/score`], ["PUT", `/api/memos/${id}/score`, { value: 5 }],
+    ["DELETE", `/api/memos/${id}/score`],
+    ["GET", `/api/memos/${id}/history`],
+  ];
+  for (const [m, p, b = {}] of surfaces) {
+    const res = await call(m, p, b);
+    assert.equal(res.status, 403, `${m} ${p} 가 ${res.status} 를 돌려줬다`);
+    assert.equal(res.json.code, "no_team_assigned", `${m} ${p}`);
+  }
+
+  // 검색도 같다. 200 빈 목록이면 "보드가 비었다"는 다른 사실이 된다.
+  assert.equal((await call("GET", "/api/memos", {}, "q=visible")).status, 403);
+  // 그리고 아무것도 안 남겼다 — 거절이 부작용을 통과시키면 문턱이 아니다.
+  assert.equal((await memo("GET", "/api/memos", {}, "staff")).json.total, 1);
+});
+
+test("whoami 는 소속이 없어도 답한다 — 진단까지 닫으면 죽은 토큰과 구분이 안 된다", async () => {
+  const { auth, tokens } = withNewcomer();
+  const res = await auth("__newcomer__");
+  assert.equal(res.status, 200);
+  assert.equal(res.json.user, "newcomer");
+  assert.deepEqual(res.json.teams, [], "빈 배열이 '팀을 하나 받으면 된다'는 답이다");
+  assert.ok(tokens.__newcomer__);
+});
+
+test("팀 하나를 받으면 그 즉시 열리고, 빼면 그 즉시 닫힌다 — 캐시가 없다", async () => {
+  const { call, admin } = withNewcomer();
+  assert.equal((await call("GET", "/api/memos")).status, 403);
+
+  await admin("POST", `/api/admin/teams/${DEFAULT_TEAM}/members`, { user: "newcomer" });
+  assert.equal((await call("GET", "/api/memos")).status, 200);
+  assert.equal((await call("POST", "/api/memos", { body: "first post" })).json.memo.team, DEFAULT_TEAM,
+    "소속이 하나면 팀을 안 적어도 그리로 간다");
+
+  await admin("DELETE", `/api/admin/teams/${DEFAULT_TEAM}/members`, { user: "newcomer" });
+  const shut = await call("GET", "/api/memos");
+  assert.equal(shut.status, 403);
+  assert.equal(shut.json.code, "no_team_assigned");
+});
+
+test("super 는 언제나 팀을 골라야 한다 — 소속 행이 몇 개든", async () => {
+  const { memo, teamStore, tokenStore, tokens } = rig();
+  tokens.solo = tokenStore.issue({ user: "solo" }).token;
+  teamStore.addMember(SUPER_TEAM, "solo");
+  assert.equal(teamStore.defaultTeamFor("solo"), null, "소속 행이 super 하나");
+
+  const res = await memo("POST", "/api/memos", { body: "b" }, "solo");
+  assert.equal(res.status, 400);
+  assert.equal(res.json.code, "team_required");
+  // super 는 전 팀에 쓸 수 있으므로 되물음에 실리는 이름도 전 팀이다.
+  assert.ok(res.json.teams.includes("secret") && res.json.teams.includes(DEFAULT_TEAM));
+  assert.equal((await memo("POST", "/api/memos", { body: "b", team: DEFAULT_TEAM }, "solo")).status, 201);
+
+  // **super 를 얹는 가장 흔한 모양**: 원래 team-n 하나였던 사람에게 super 를 더한다.
+  // 처음 판은 목록에서 super 만 빼고 셌고, 그래서 여기가 "소속 하나"로 세어져 조용한 기본값을
+  // 받았다 — 비밀 프로젝트를 전부 아는 사람만 문턱 밖에 서 있었다는 뜻이다.
+  assert.equal(teamStore.defaultTeamFor("exec"), null, "exec 은 {super, team-n} 이다");
+  const quiet = await memo("POST", "/api/memos", { body: "draft about the secret project" }, "exec");
+  assert.equal(quiet.status, 400, "201 이면 이 글이 team-n 에 조용히 올라간 것이다");
+  assert.equal(quiet.json.code, "team_required");
+  // 그 문턱이 없던 판에서 무슨 일이 벌어졌는지 — 사원이 그 글을 읽는다 — 를 함께 못 박는다.
+  assert.equal((await memo("GET", "/api/memos", {}, "staff", "q=secret project")).json.total, 0);
+});
+
+// ---- 팀 문턱은 아티팩트 저장소에도 걸린다 (v0.14.0) -------------------------------------------
+//
+// 저장소는 팀을 모른다(apps/files 에 그 낱말이 없다). 정체성만 물어보므로, 얹지 않으면
+// "소속이 없으면 아무것도 없다"가 배포의 절반에만 참이 된다.
+
+test("withTeamGate: 소속 없는 토큰은 저장소에서도 거절된다 — 관리자 토큰은 그대로", () => {
+  const { teamStore, tokenStore, tokens } = rig();
+  const verdict = createVerdict({ tokenStore, adminToken: ADMIN });
+  const gated = withTeamGate(verdict, teamStore);
+  const orphan = tokenStore.issue({ user: "newcomer" }).token;
+
+  assert.equal(gated(tokens.staff).user, "staff", "소속 있는 사람은 그대로 통과");
+  assert.equal(gated(tokens.exec).user, "exec", "super 도 통과(visibleTeams 가 null)");
+  const opr = gated(ADMIN);
+  assert.equal(opr.ok, true);
+  assert.equal(opr.user, null, "관리자 토큰에는 소속이라는 개념이 없다");
+
+  const shut = gated(orphan);
+  assert.equal(shut.ok, false);
+  assert.equal(shut.status, 403);
+  assert.equal(shut.code, "no_team_assigned");
+
+  // 팀에 넣으면 저장소도 같은 요청에서 열린다 — 캐시가 없다.
+  teamStore.addMember(DEFAULT_TEAM, "newcomer");
+  assert.equal(gated(orphan).user, "newcomer");
+
+  // 토큰 자체가 틀린 경우는 팀 문턱이 가리지 않는다 — 원인이 다르면 코드도 달라야 한다.
+  assert.equal(gated("bm_nope").code, "memo_token_invalid");
+  // 배선이 빠진 채로 세우면 기동에서 죽는다(라우터와 같은 규칙): 기본값이 "전부 통과"다.
+  assert.throws(() => withTeamGate(verdict, null), /teamStore is required/);
+});
+
+test("관리자 축은 소속 없는 사람을 이름으로 말해 준다 — 물어보기 전에 보여야 하는 사실", async () => {
+  const { admin, tokenStore } = rig();
+  assert.deepEqual((await admin("GET", "/api/admin/teams", {})).json.unassigned, []);
+
+  tokenStore.issue({ user: "newcomer" });
+  tokenStore.issue({ user: "newcomer" });   // 같은 사람의 둘째 기기 — 이름은 한 번만 나온다
+  assert.deepEqual((await admin("GET", "/api/admin/teams", {})).json.unassigned, ["newcomer"]);
+
+  await admin("POST", "/api/admin/teams/secret/members", { user: "newcomer" });
+  assert.deepEqual((await admin("GET", "/api/admin/teams", {})).json.unassigned, [],
+    "기본팀이 아니어도 소속은 소속이다");
+});
+
+test("내보낸 사람은 「팀 없음」에 남지 않는다 — 살아 있는 토큰만 센다", async () => {
+  const { admin, tokenStore } = rig();
+  // 정식 오프보딩: 토큰을 폐기하고 팀에서 뺀다. 폐기는 소프트라 행이 남는다(추적이 그 이유다).
+  const issued = tokenStore.issue({ user: "leaver" });
+  await admin("POST", `/api/admin/teams/${DEFAULT_TEAM}/members`, { user: "leaver" });
+  tokenStore.revoke(issued.id);
+  await admin("DELETE", `/api/admin/teams/${DEFAULT_TEAM}/members`, { user: "leaver" });
+
+  assert.deepEqual((await admin("GET", "/api/admin/teams", {})).json.unassigned, [],
+    "폐기 행까지 세면 이 목록은 첫 오프보딩 이후 영영 비지 않는다 — 신호가 상수가 된다");
+
+  // 기기를 바꿔 다시 발급받으면 다시 뜬다 — 그때는 진짜로 배정이 남아 있다.
+  tokenStore.issue({ user: "leaver" });
+  assert.deepEqual((await admin("GET", "/api/admin/teams", {})).json.unassigned, ["leaver"]);
+});
+
+// ---- 이관: 암묵 소속 → 명시 행 (v0.14.0) -----------------------------------------------------
+//
+// 규칙이 뒤집히는 순간 기존 사용자 전원의 소속 행이 0 개가 된다. 이관이 없으면 재기동 다음
+// 요청부터 보드가 통째로 닫히고, 정책 변경이 장애로 보인다.
+
+// 0.13.x 의 DB 를 만든다 — TeamStore 를 한 번도 세우지 않은 상태가 그 판의 정의다.
+function legacyDb() {
+  const db = openDb(":memory:");
+  new MemoStore(db);                       // 스키마(team·team_member 포함)를 세운다
+  const tokenStore = new TokenStore(db);
+  for (const u of ["kim", "lee", "lee"]) tokenStore.issue({ user: u });
+  tokenStore.revoke(tokenStore.list().at(-1).id);   // 폐기된 토큰의 사람도 사람이다
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 0);
+  return { db, tokenStore };
+}
+
+test("이관: 있던 사람에게 있던 것을 행으로 남긴다 — 재기동이 보드를 닫지 않는다", () => {
+  const { db } = legacyDb();
+  const teamStore = new TeamStore(db);
+  assert.equal(teamStore.migrated, 2, "사람 수만큼 — 같은 사람의 토큰 두 개가 두 행이 되지 않는다");
+  assert.deepEqual(teamStore.membersOf(DEFAULT_TEAM), ["kim", "lee"]);
+  assert.deepEqual(teamStore.teamsOf("kim"), [DEFAULT_TEAM]);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 1);
+});
+
+test("이관은 한 번만 돈다 — 재기동이 운영자가 뺀 사람을 되살리면 안 된다", () => {
+  const { db } = legacyDb();
+  new TeamStore(db);
+  const second = new TeamStore(db);
+  assert.equal(second.migrated, 0);
+
+  // 운영자가 한 사람을 뺀다. 그 다음 재기동이 그것을 되돌리면 폐기가 의미를 잃는다.
+  second.removeMember(DEFAULT_TEAM, "kim");
+  const third = new TeamStore(db);
+  assert.equal(third.migrated, 0);
+  assert.deepEqual(third.membersOf(DEFAULT_TEAM), ["lee"]);
+  assert.deepEqual(third.teamsOf("kim"), []);
+});
+
+test("새 배포에서는 옮길 사람이 없고, 그 뒤에 발급된 토큰은 소속을 얻지 않는다", () => {
+  const db = openDb(":memory:");
+  new MemoStore(db);
+  const tokenStore = new TokenStore(db);
+  const teamStore = new TeamStore(db);
+  assert.equal(teamStore.migrated, 0);
+
+  tokenStore.issue({ user: "newcomer" });
+  assert.deepEqual(new TeamStore(db).teamsOf("newcomer"), [],
+    "토큰 발급은 접근 허가가 아니다 — 그것이 0.14.0 의 전부다");
+});
+
+test("표식이 사라진 DB(.dump 재구축)에서도 정리된 명단을 되살리지 않는다", () => {
+  const { db } = legacyDb();
+  const first = new TeamStore(db);
+  assert.equal(first.migrated, 2);
+  // 운영자가 떠난 사람을 뺀다 — 0.14.0 이 존재하는 이유가 이 손이다.
+  first.removeMember(DEFAULT_TEAM, "kim");
+
+  // `sqlite3 .dump | sqlite3` 로 다시 세운 파일은 user_version 을 안 들고 온다(VACUUM 계열은
+  // 보존한다). 표식 하나에만 걸려 있으면 그 창에서 이관이 다시 돌아 kim 이 되살아난다.
+  db.exec("PRAGMA user_version = 0");
+  const rebuilt = new TeamStore(db);
+  assert.equal(rebuilt.migrated, 0);
+  assert.deepEqual(rebuilt.teamsOf("kim"), [], "재기동이 운영자의 결정을 되돌리면 안 된다");
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 1, "표식은 다시 찍힌다");
+});
+
+test("이관은 이미 있던 팀 소속을 건드리지 않는다 — 더하기이지 덮어쓰기가 아니다", () => {
+  const { db } = legacyDb();
+  // 0.13.x 에서 운영자가 이미 비밀 팀을 만들어 둔 판.
+  const before = new TeamStore(db);
+  before.create({ name: "secret" });
+  before.addMember("secret", "kim");
+  db.exec("PRAGMA user_version = 0");        // 이관 전으로 되돌린다
+  db.prepare("DELETE FROM team_member WHERE team = ?").run(DEFAULT_TEAM);
+
+  const after = new TeamStore(db);
+  assert.equal(after.migrated, 2);
+  assert.deepEqual(after.teamsOf("kim"), ["secret", DEFAULT_TEAM]);
 });

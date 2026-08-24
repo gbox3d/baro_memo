@@ -25,7 +25,7 @@ import { VoteStore } from "./memo/vote-store.mjs";
 import { AuditStore } from "./memo/audit-store.mjs";
 import { TokenStore } from "./auth/token-store.mjs";
 import { TeamStore } from "./auth/team-store.mjs";
-import { createVerdict } from "./auth/verdict.mjs";
+import { createVerdict, withTeamGate } from "./auth/verdict.mjs";
 import { createMemoRoutes } from "./memo/routes.mjs";
 import { createAdminRoutes } from "./admin/routes.mjs";
 import { createAuthRoutes } from "./auth/routes.mjs";
@@ -79,10 +79,14 @@ function basePathOf(headers) {
 
 // 저장소 마운트. 여는 데 실패해도(외장 볼륨 미장착 등) **보드는 선다** — 마운트만 503 을 답한다.
 // 프로세스를 합치면서 새로 생길 뻔한 실패 결합이 정확히 이것이었다.
+//
+// 판정에 **팀 문턱을 얹어서** 넘긴다(0.14.0) — 소속 없는 사용자에게 보드만 닫고 저장소를
+// 열어 두면 "아무것도 없다"가 배포의 절반에만 참이 된다. 근거는 withTeamGate 에 있다.
 const files = await createFilesMount({
   root: FILES_ROOT, repoRoot, version: pkg.version, basePathOf,
-  resolveToken: (token) => verdict(token),
+  resolveToken: withTeamGate(verdict, teamStore),
 });
+
 wireReaper(files.store);
 
 const routers = [

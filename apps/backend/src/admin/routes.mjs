@@ -99,8 +99,22 @@ export function createAdminRoutes(ctx) {
       if (pathname === "/api/admin/teams") {
         if (method === "GET") {
           const teams = teamStore.list();
-          return json(200, { count: teams.length, teams });
+          // 어느 팀에도 없는 사람들 (0.14.0). **운영자가 물어보기 전에 보여야 하는 사실**이다:
+          // 소속이 없으면 그 사람에게 보드는 통째로 닫혀 있고(403 no_team_assigned), 토큰을 쥔
+          // 본인은 자기가 무엇을 기다리는지 모른다. 토큰 표에서 이름을 세는 이유는 이 보드가
+          // 아는 사람의 정의가 곧 토큰이기 때문이다(user 는 늘 토큰에서 찍힌다).
+          //
+          // **살아 있는 토큰만 센다.** 폐기는 소프트라 행이 남는데(추적이 그 이유다), 그것까지
+          // 세면 정식으로 내보낸 사람이 영원히 "할 일"로 남는다 — 이 목록은 비어 있는 것이
+          // 정상이라는 전제 위에 서 있어서, 첫 오프보딩 이후로는 신호가 아니라 상수가 된다.
+          // 문서가 시키는 격리 확인 절차(임시 사용자로 발급 → 확인 → 폐기)도 똑같이 잔여물을 남긴다.
+          const assigned = new Set(teams.flatMap((t) => t.members));
+          const unassigned = [...new Set(tokenStore.list().filter((t) => !t.revokedAt).map((t) => t.user))]
+            .filter((u) => u && !assigned.has(u)).sort();
+
+          return json(200, { count: teams.length, teams, unassigned });
         }
+
         if (method === "POST") {
           try { return json(201, { team: teamStore.create(body) }); }
           catch (error) { return badRequest(error); }
