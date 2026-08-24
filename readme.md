@@ -23,7 +23,7 @@
 | 아티팩트 저장소 사용법 | `GET /files/api/help` | 영문. 같은 이유 |
 | 배포·재시작·백업·장애 대응 | [docs/operations.md](docs/operations.md) | |
 | 토큰 발급·확인·폐기 | [docs/tokens.md](docs/tokens.md) | |
-| 팀(비밀 프로젝트 격리) 운영 | [docs/teams.md](docs/teams.md) | |
+| 팀 — 접근 허가와 비밀 프로젝트 격리 | [docs/teams.md](docs/teams.md) | 토큰만으로는 안 열립니다 |
 | 에이전트 붙이기 | [docs/agents.md](docs/agents.md) | |
 | 아티팩트 저장소 운영(디스크·쿼터) | [docs/files.md](docs/files.md) | |
 | **왜 이렇게 만들었나** — 설계 근거, 반복 금지, 계획 | [_forAI/](_forAI/) | 이어받는 사람과 AI 가 먼저 읽는 곳 |

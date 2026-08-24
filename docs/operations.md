@@ -212,6 +212,8 @@ pnpm backup --dest /어디    # 목적지를 바꿔서
 - DB 둘은 `VACUUM INTO` 로 뜹니다 — SQLite 가 스스로 일관된 사본을 만들므로 **서버를 멈출
   필요가 없습니다.** 임시 이름으로 뜨고 행 수를 원본과 맞춰 본 뒤에 제자리로 옮깁니다. 그래서
   실패한 실행이 어제의 멀쩡한 사본을 반쪽으로 만들지 않고, 같은 날 다시 돌려도 됩니다.
+  `VACUUM INTO` 는 `PRAGMA user_version` 도 그대로 옮깁니다 — 그 값이 팀 이관의 표식이라,
+  보존하지 않는 방법으로 뜬 사본은 다음 기동에서 이관을 한 번 더 돌리려 듭니다(아래).
 - `admin-token` 과 `.env` 는 권한 600 으로 복사합니다 — 백업본이 원본보다 헐거우면 백업이
   구멍입니다.
 - `store/` 는 **없는 것만** 복사합니다. 내용 주소(파일 이름이 곧 sha256)라 한 번 복사한 것은
@@ -239,6 +241,18 @@ pnpm backup --dest /어디    # 목적지를 바꿔서
 아티팩트는 이름이 곧 해시라 자기검증이 됩니다 —
 `cd /mnt/baro_memo_backup/store && sha256sum -c <(for f in *; do echo "$f  $f"; done)`.
 
+**`sqlite3 .dump | sqlite3` 나 `.recover` 로 DB 를 다시 세웠다면** — 파일이 깨졌을 때 손이
+가는 경로입니다 — `PRAGMA user_version` 이 0 으로 돌아옵니다. SQL 텍스트가 그 값을 안 들고
+가기 때문입니다. 그 값은 팀 이관이 "이미 돌았다"를 기억하는 자리라, 0 인 채로 올리면 다음
+기동이 토큰을 가진 사람 전원을 `team-n` 에 다시 넣으려 합니다. 서버는 그 경우를 한 번 더
+막아 두었지만(`team-n` 에 구성원 행이 하나라도 있으면 이관을 건너뜁니다), **`team-n` 을 비워
+둔 배포라면 그 방어도 안 걸립니다.** 재구축한 파일을 올리기 전에 값을 직접 맞추십시오:
+
+```bash
+sqlite3 memo.db 'PRAGMA user_version;'      # 1 이어야 합니다
+sqlite3 memo.db 'PRAGMA user_version = 1;'  # 0 이면
+```
+
 복구는 새 호스트 절차 그대로이고, 4단계 전에 백업본을 제자리에 놓는 것만 다릅니다. 하나
 주의할 것은 권한입니다: `store/` 는 nginx(`www-data`)가 직접 읽으므로 디렉터리 755 · 파일 644
 여야 하고(`rsync -a` 가 보존합니다), 서버는 **자기가 만든 파일에만** 그 권한을 챙깁니다.
@@ -257,6 +271,8 @@ pnpm backup --dest /어디    # 목적지를 바꿔서
 | 다운로드가 503 `identity_unavailable` | 재시도 | 백엔드가 그 순간 안 답한다(재시작 창) |
 | 업로드가 507 `insufficient_storage` | `df -h` · `/files/api/health` 의 `freeBytes` | 여유가 예약분(20 GiB) 밑. 같은 볼륨에 보드 DB 가 살아서, 보드까지 멎기 전에 막는 문턱이다 — 지우는 창구는 [files.md](./files.md) |
 | 관리자 토큰이 401 인데 파일 값은 맞다 | 기동 로그 첫 줄의 시각 | 교체하고 재시작을 안 했다 |
+| 팀원이 읽기까지 403 `no_team_assigned` | 관리자 페이지 「팀」의 「팀 없음」 목록 | 토큰만 발급하고 팀 배정을 안 했다(0.14.0 부터 둘이 별개다) — [teams.md](./teams.md). `/files/` 도 같은 답을 한다 |
+| 어제까지 되던 글쓰기가 400 `team_required` | 그 사람의 소속 수 (`/api/admin/teams`) | 팀이 둘 이상이 됐다. 응답이 고를 이름을 함께 주므로 그쪽 에이전트가 `{"team": …}` 를 붙이면 된다 |
 | 재부팅 뒤 보드만 안 올라옴 | `grep -q baro-memo ~/.pm2/dump.pm2` | 덤프에서 빠졌다. `pm2 startOrReload ecosystem.config.cjs --only baro-memo` → 전부 online 확인 → `pm2 save`. 부팅 등록 자체는 systemd `pm2-<사용자>.service` |
 
 로그는 `pm2 logs baro-memo` (파일은 `~/.pm2/logs/baro-memo-*.log`). 기동 두 줄이 판 번호·DB
