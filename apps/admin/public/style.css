@@ -150,7 +150,22 @@ footer { padding: 16px; color: var(--muted); font-size: 12px; }
   background: var(--bg); margin-top: 6px;
 }
 #member-list li button { padding: 2px 8px; line-height: 1.4; font-size: 13px; }
+
+/* 어느 팀에도 없는 사람들. 명단과 같은 모양을 쓴다 — 같은 성격의 목록이고, 다른 옷을 입히면
+   운영자가 두 벌의 규칙을 익혀야 한다. hidden 이 먹어야 하므로 여기도 display 를 주지 않는다. */
+#no-team:not([hidden]) { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+#no-team-list { list-style: none; margin: 0; padding: 0; }
+#no-team-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg); margin-top: 6px;
+}
+#no-team-list li button { padding: 2px 8px; line-height: 1.4; font-size: 13px; }
+/* 사실을 말하는 한 줄이지 경보가 아니다 — 색은 danger 를 쓰되 굵기·배경으로 키우지 않는다. */
+.warn { color: var(--danger); font-size: 13px; }
+
 /* 내장 팀 표시(✦)는 이름 옆의 사실이지 강조가 아니다. */
+
 #team-list td:first-child { font-variant-numeric: tabular-nums; }
 /* 격리된 글의 팀 이름. 색으로 경고하지 않는다 — 비밀은 사고가 아니라 상태다. */
 .team {

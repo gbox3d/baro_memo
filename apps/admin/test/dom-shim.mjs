@@ -138,7 +138,11 @@ function makeFetch({ version, fail, tokens, memos, requests, boardUrl, boardTota
         teams.push(made);
         return { ok: true, status: 201, json: async () => ({ team: made }) };
       }
-      return { ok: true, status: 200, json: async () => ({ count: teams.length, teams }) };
+      // unassigned — 실제 서버와 같은 계산이다(토큰이 아는 이름 중 어느 팀에도 없는 사람).
+      const assigned = new Set(teams.flatMap((t) => t.members));
+      const unassigned = [...new Set(tokens.map((t) => t.user))].filter((u) => u && !assigned.has(u)).sort();
+      return { ok: true, status: 200, json: async () => ({ count: teams.length, teams, unassigned }) };
+
     }
 
     if (method === "POST" && path.includes("/admin/tokens")) {
@@ -169,9 +173,10 @@ export function loadAdminPage({
   tokens = [], memos = [], boardTotal = null, adminToken = "",
   // 내장 둘은 실제 서버가 늘 갖고 있는 모양 그대로다. 검사가 다른 팀을 원하면 얹는다.
   teams = [
-    { name: "team-n", note: "기본팀 — 모든 사용자가 소속", builtin: true, createdAt: "t", members: [] },
+    { name: "team-n", note: "기본팀 — 새 사용자를 넣을 자리(자동 소속이 아닙니다)", builtin: true, createdAt: "t", members: [] },
     { name: "super", note: "전 팀 보기·쓰기", builtin: true, createdAt: "t", members: [] },
   ],
+
   teamsMissing = false,
 } = {}) {
   const store = new Map(storedTz ? [["baro-memo-tz", storedTz]] : []);

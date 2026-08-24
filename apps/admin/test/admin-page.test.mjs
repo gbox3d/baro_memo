@@ -622,15 +622,24 @@ test("저장해 둔 정렬 축으로 열린다", async () => {
 // 백엔드의 격리는 team.test.mjs 가 지킨다. 여기서 지키는 것은 운영자의 손이다: 팀을 만들고
 // 사람을 넣고 빼는 세 동작이 실제로 그 요청을 만들고, 낡은 백엔드에서 페이지가 죽지 않는 것.
 
-test("팀 목록: 내장 둘이 보이고 기본팀 인원은 '전원'이다", async () => {
-  const page = loadAdminPage({ adminToken: "adm" });
+test("팀 목록: 내장 둘이 보이고 인원은 전부 세어진 수다 (0.14.0)", async () => {
+  const page = loadAdminPage({
+    adminToken: "adm",
+    teams: [
+      { name: "team-n", note: "", builtin: true, createdAt: "t", members: ["kim", "lee"] },
+      { name: "super", note: "", builtin: true, createdAt: "t", members: [] },
+    ],
+  });
   await page.settled;
   const rows = page.node("#team-list tbody").children;
   assert.equal(rows.length, 2);
   assert.match(rows[0].innerHTML, /team-n/);
-  assert.match(rows[0].innerHTML, /전원/, "기본팀은 셀 인원이 없다 — 전원이 암묵 소속이다");
+  // "전원"이라는 특례가 사라졌다 — 기본팀도 행으로 세는 팀이고, 그 수가 곧 접근 인원이다.
+  assert.equal(/전원/.test(rows[0].innerHTML), false);
+  assert.match(rows[0].innerHTML, /<td>2<\/td>/);
   assert.match(rows[1].innerHTML, /super/);
 });
+
 
 test("팀 생성이 요청을 만들고, 만든 팀이 선택된다 — 다음 동작은 사람을 넣는 것이다", async () => {
   const page = loadAdminPage({ adminToken: "adm" });
@@ -679,12 +688,87 @@ test("구성원 추가·제거가 본문(user)으로 나간다 — 경로 조각
   assert.ok(removed);
 });
 
-test("기본팀을 골라도 구성원 패널은 열리지 않는다 — 넣고 뺄 것이 없다", async () => {
+test("기본팀도 구성원 패널이 열린다 — 거기 넣는 손이 보드를 여는 유일한 동작이다 (0.14.0)", async () => {
   const page = loadAdminPage({ adminToken: "adm" });
   await page.settled;
   page.pickTeamRow(0); // team-n
-  assert.equal(page.node("#team-detail").hidden, true);
+  assert.equal(page.node("#team-detail").hidden, false);
 });
+
+test("팀 없는 사람이 이름으로 뜨고, 눌러서 고른 팀에 넣는다", async () => {
+  const page = loadAdminPage({
+    adminToken: "adm",
+    tokens: [
+      { id: 1, user: "kim", note: "", token: "tok_1", createdAt: "2026-08-14T00:00:00.000Z", revokedAt: null },
+      { id: 2, user: "lee", note: "", token: "tok_2", createdAt: "2026-08-14T00:00:00.000Z", revokedAt: null },
+    ],
+    teams: [
+      { name: "team-n", note: "", builtin: true, createdAt: "t", members: ["kim"] },
+      { name: "super", note: "", builtin: true, createdAt: "t", members: [] },
+    ],
+  });
+  await page.settled;
+
+  const box = page.node("#no-team");
+  assert.equal(box.hidden, false, "소속 없는 사람이 있으면 보여야 한다 — 운영자가 묻기 전에");
+  const rows = page.node("#no-team-list").children;
+  assert.equal(rows.length, 1, "kim 은 team-n 소속이라 여기 없다");
+  assert.equal(rows[0].children[0].textContent, "lee");
+
+  // 팀을 안 골랐으면 넣을 곳이 없다 — 버튼이 아무 팀이나 고르지 않는다.
+  assert.equal(rows[0].children[1].disabled, true);
+
+  page.pickTeamRow(0); // team-n
+  const btn = page.node("#no-team-list").children[0].children[1];
+  assert.equal(btn.disabled, false);
+  await btn._on.click();
+  await page.settled;
+
+  const added = page.requests.find((r) => r.method === "POST" && r.path.includes("/teams/team-n/members"));
+  assert.ok(added, "POST /admin/teams/team-n/members 가 나가야 한다");
+  assert.equal(JSON.parse(added.body).user, "lee");
+  assert.match(page.status(), /추가됨/);
+  // 넣고 나면 그 이름은 목록에서 사라진다 — 남은 할 일만 남는 자리다.
+  assert.equal(page.node("#no-team").hidden, true);
+});
+
+test("발급 직후 「팀 없음」이 갱신된다 — 이 구획이 만들어진 바로 그 흐름이다", async () => {
+  const page = loadAdminPage({
+    adminToken: "adm",
+    tokens: [{ id: 1, user: "kim", note: "", token: "tok_1", createdAt: "2026-08-14T00:00:00.000Z", revokedAt: null }],
+    teams: [
+      { name: "team-n", note: "", builtin: true, createdAt: "t", members: ["kim"] },
+      { name: "super", note: "", builtin: true, createdAt: "t", members: [] },
+    ],
+  });
+  await page.settled;
+  assert.equal(page.node("#no-team").hidden, true, "출발은 전원 배정 완료 상태");
+
+  // shim 의 발급은 user "new" 를 돌려준다. 그 사람은 어느 팀에도 없다.
+  page.node("#issue-user").value = "new";
+  page.requests.length = 0;
+  await page.node("#issue-form")._on.submit({ preventDefault() {} });
+  await page.settled;
+
+  assert.ok(page.requests.some((r) => r.method === "GET" && r.path.includes("admin/teams")),
+    "발급만 다시 읽으면 방금 발급받은 사람이 「팀 없음」에 안 뜬다 — 운영자는 일이 끝난 줄 안다");
+  // 상태줄이 다음 동작을 말한다 — "발급됨" 만으로는 절반만 끝난 것이다.
+  assert.match(page.status(), /팀/);
+});
+
+test("모두가 팀을 가졌으면 「팀 없음」은 아예 없다 — 빈 상자가 화면에 눌러앉지 않는다", async () => {
+  const page = loadAdminPage({
+    adminToken: "adm",
+    tokens: [{ id: 1, user: "kim", note: "", token: "tok_1", createdAt: "2026-08-14T00:00:00.000Z", revokedAt: null }],
+    teams: [
+      { name: "team-n", note: "", builtin: true, createdAt: "t", members: ["kim"] },
+      { name: "super", note: "", builtin: true, createdAt: "t", members: [] },
+    ],
+  });
+  await page.settled;
+  assert.equal(page.node("#no-team").hidden, true);
+});
+
 
 test("0.13.0 이전 백엔드에서는 팀 구획만 비고 나머지는 돈다 — 404 가 화면을 울리지 않는다", async () => {
   const page = loadAdminPage({
@@ -708,7 +792,13 @@ test("팀 속성창은 세로로 쌓인다 — .detail 의 기본은 가로라 �
     "여기서 display 를 주면 hidden 이 안 먹는다(.detail 과 같은 함정)");
   const list = css.match(/#member-list\s*\{([^}]*)\}/);
   assert.ok(list && /list-style:\s*none/.test(list[1]), "명단에 브라우저 기본 불릿이 남는다");
+  // 「팀 없음」도 같은 함정 둘을 지나야 한다 — 불릿과, hidden 을 이기는 display.
+  const noTeam = css.match(/#no-team-list\s*\{([^}]*)\}/);
+  assert.ok(noTeam && /list-style:\s*none/.test(noTeam[1]), "팀 없음 목록에 불릿이 남는다");
+  assert.equal(/(^|[;\s])#no-team\s*\{[^}]*display\s*:/.test(css), false,
+    "#no-team 에 display 를 주면 아무도 없을 때 빈 상자가 눌러앉는다");
 });
+
 
 test("리스트의 팀 칸: 격리된 글만 이름이 보이고 기본팀은 비어 있다", async () => {
   const page = loadAdminPage({

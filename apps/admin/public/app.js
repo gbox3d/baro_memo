@@ -14,7 +14,8 @@ const PAGE = 10;
 const state = {
   tokens: [], memos: [], bodies: new Map(), comments: new Map(), history: new Map(),
   scores: new Map(), invites: new Map(),
-  teams: [],
+  teams: [], unassigned: [],
+
   boardUrl: null,
   offset: 0, total: 0, sort: "new",
   selectedToken: null, selectedMemo: null, selectedTeam: null,
@@ -196,8 +197,12 @@ $("#issue-form").addEventListener("submit", async (e) => {
     // 성공이 확정된 뒤에 비운다. 먼저 비우면 실패했을 때 방금 친 값이 사라진다.
     $("#issue-form").reset();
     state.selectedToken = token.id; // 발급 직후 값을 바로 복사할 수 있게 선택 상태로
-    await loadTokens();
-    say(`발급됨 — ${token.user} 에게 값을 전달하세요.`);
+    // 팀 구획도 같이 다시 읽는다 — 방금 발급받은 사람은 소속이 0개이므로 「팀 없음」에 떠야
+    // 하고, 그 목록이 이 흐름을 위해 만들어졌다. 여기서 안 부르면 운영자는 "발급됨" 만 보고
+    // 자리를 뜨고, 받은 사람은 403 만 본다. (제안 목록 #known-users 도 여기서 따라온다.)
+    await Promise.all([loadTokens(), loadTeams()]);
+    say(`발급됨 — ${token.user} 에게 값을 전달하고, 아래 「팀」에서 팀을 지정하세요.`);
+
   } catch (err) { sayError(err); }
   finally { btn.disabled = false; }
 });
@@ -514,20 +519,28 @@ async function loadTokens() {
   renderTokens();
 }
 
-// 리스트의 팀 칸. 기본팀은 비운다 — 거의 모든 줄이 team-n 이라 다 적으면 눈이 걸러야 할 것이
-// 늘기만 한다. 값이 보이는 줄이 곧 격리된 글이고, 그게 이 칸을 넣는 이유다.
-// 옛 백엔드(0.13.0 이전)는 team 을 안 싣는다 — 그때는 빈 칸이지 "기본팀"이 아니므로 구분해 둔다.
+// 리스트의 팀 칸. `team-n` 은 비운다 — 거의 모든 줄이 그 값이라 다 적으면 눈이 걸러야 할 것이
+// 늘기만 한다. 값이 보이는 줄은 **team-n 보다 좁은 팀의 글**이다.
+//
+// 0.14.0 부터 team-n 도 행으로 소속을 세는 평범한 팀이라, 빈 칸이 "아무나 본다"는 뜻은 아니다 —
+// 가장 넓은 팀이라는 뜻이다. 그 차이가 이 칸의 tooltip 과 <th> 에 적혀 있다.
+// 옛 백엔드(0.13.0 이전)는 team 을 안 싣는다 — 그때는 빈 칸이지 팀 이름이 아니다.
 function teamCell(m) {
   if (m.team === undefined) return "";
   if (m.team === "team-n") return "";
-  return `<span class="team" title="이 글은 ${esc(m.team)} 구성원에게만 보입니다">${esc(m.team)}</span>`;
+  return `<span class="team" title="이 글은 ${esc(m.team)} 구성원에게만 보입니다 — team-n 만 가진 사람에게는 없는 글입니다">${esc(m.team)}</span>`;
 }
+
 
 // ---- 팀 ---------------------------------------------------------------------------------
 //
 // 소속은 사람(user)에 걸린다 — 토큰이 아니다. 폐기·재발급이 팀을 건드리면 안 되기 때문이고,
 // 그래서 이 구획의 명단은 토큰 표와 따로 논다(같은 이름이 양쪽에 보이는 것이 정상이다).
-// 내장 둘: team-n 은 모두의 기본팀(구성원 관리가 없다), super 는 전 팀 보기·쓰기.
+// 내장 둘: team-n 은 새 사용자를 넣을 기본 자리, super 는 전 팀 보기·쓰기.
+//
+// **0.14.0 부터 team-n 도 평범한 팀이다.** 전에는 전원이 암묵 소속이라 명단도 없고 넣고 뺄
+// 것도 없었는데, 그 암묵이 곧 "토큰을 받으면 보드를 받는다"였다. 지금 이 구획에서 사람을
+// 넣는 손이 그 사람에게 보드를 여는 유일한 동작이고, 그래서 아래 「팀 없음」이 있다.
 
 function renderTeams() {
   const tbody = $("#team-list tbody");
@@ -537,16 +550,18 @@ function renderTeams() {
     tr.innerHTML = `
       <td class="mono">${esc(t.name)}${t.builtin ? " ✦" : ""}</td>
       <td>${esc(t.note) || "—"}</td>
-      <td>${t.name === "team-n" ? "전원" : t.members.length}</td>`;
+      <td>${t.members.length}</td>`;
     tr.addEventListener("click", () => selectTeam(t.name));
     return tr;
   }));
 
+  renderUnassigned();
+
   const detail = $("#team-detail");
   const sel = state.teams.find((t) => t.name === state.selectedTeam);
-  // 기본팀은 구성원 관리가 없다 — 전원이 암묵 소속이라 넣고 뺄 것이 없다.
-  detail.hidden = !sel || sel.name === "team-n";
+  detail.hidden = !sel;
   if (detail.hidden) return;
+
 
   // 알려진 사용자 제안 — 토큰 발급 이력의 이름들. 자유 입력도 그대로 받는다.
   $("#known-users").replaceChildren(...[...new Set(state.tokens.map((t) => t.user))].map((u) => {
@@ -579,10 +594,46 @@ function renderTeams() {
   }));
 }
 
+// 어느 팀에도 없는 사람들. 목록이 아니라 **남은 할 일**이라 속성창에 둔다 — 이름을 누르면
+// 지금 고른 팀에 들어가고, 그 한 번으로 그 사람의 보드가 열린다. 서버가 세어 준 값을 그대로
+// 그린다(토큰 표에서 다시 세면 두 곳이 어긋나는 날이 온다).
+function renderUnassigned() {
+  const box = $("#no-team");
+  box.hidden = state.unassigned.length === 0;
+  if (box.hidden) return;
+
+  const sel = state.selectedTeam;
+  $("#no-team-list").replaceChildren(...state.unassigned.map((u) => {
+    const li = document.createElement("li");
+    const name = document.createElement("span");
+    name.textContent = u;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = sel ? `${sel} 에 넣기` : "팀을 먼저 고르십시오";
+    btn.disabled = !sel;
+    btn.title = sel ? `${u} 에게 ${sel} 의 글을 열어 준다` : "위 표에서 팀을 하나 고르면 넣을 수 있습니다";
+    btn.addEventListener("click", () => addMember(sel, u));
+    li.append(name, btn);
+    return li;
+  }));
+}
+
+// 구성원 넣기 — 추가 폼과 「팀 없음」 목록이 같은 손을 쓴다. 두 벌이면 한쪽만 고쳐지는 날이 온다.
+async function addMember(team, user) {
+  if (!team || !user) return;
+  try {
+    const { added } = await call(`admin/teams/${team}/members`, { method: "POST", body: { user } });
+    await loadTeams();
+    // 멱등의 두 답을 구분해 준다 — "이미 있었다"가 에러로 보이면 운영자가 상태를 의심한다.
+    say(added ? `${team} 에 ${user} 추가됨` : `${user} 는 이미 ${team} 소속`);
+  } catch (err) { sayError(err); }
+}
+
 function selectTeam(name) {
   state.selectedTeam = state.selectedTeam === name ? null : name;
   renderTeams();
 }
+
 
 $("#team-create").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -611,26 +662,27 @@ $("#member-add").addEventListener("submit", async (e) => {
   btn.disabled = true;
   try {
     const user = $("#member-user").value.trim();
-    const { added } = await call(`admin/teams/${sel.name}/members`, { method: "POST", body: { user } });
     $("#member-add").reset();
-    await loadTeams();
-    // 멱등의 두 답을 구분해 준다 — "이미 있었다"가 에러로 보이면 운영자가 상태를 의심한다.
-    say(added ? `${sel.name} 에 ${user} 추가됨` : `${user} 는 이미 ${sel.name} 소속`);
-  } catch (err) { sayError(err); }
-  finally { btn.disabled = false; }
+    await addMember(sel.name, user);
+  } finally { btn.disabled = false; }
 });
 
 async function loadTeams() {
-  if (!tokenInput.value.trim()) { state.teams = []; renderTeams(); return; }
+  if (!tokenInput.value.trim()) { state.teams = []; state.unassigned = []; renderTeams(); return; }
   try {
-    state.teams = (await call("admin/teams")).teams;
+    const res = await call("admin/teams");
+    state.teams = res.teams;
+    // 0.13.x 백엔드는 이 칸을 안 싣는다 — 그때는 「팀 없음」이 없는 개념이라 빈 목록이 맞다.
+    state.unassigned = res.unassigned || [];
   } catch (err) {
     state.teams = [];
+    state.unassigned = [];
     // 낡은 백엔드(0.13.0 이전)는 이 경로가 없다 — 팀 구획만 비고 나머지는 돌아야 한다.
     if (err.status !== 404) sayError(err);
   }
   renderTeams();
 }
+
 
 // ---- 보드 (읽기 전용) ------------------------------------------------------------------
 
