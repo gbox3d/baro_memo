@@ -1,0 +1,19 @@
+{
+  "name": "baro-memo",
+  "pm2": "baro-memo",
+  "port": 3001,
+  "route": { "public": "/memo/api/", "upstream": "/api/" },
+  "health": "/api/health",
+  "version": { "path": "/api/version", "field": "version" },
+  "checkout": "/home/gblab-dgx-01/works/baro_memo",
+  "ui": {
+    "group": "tool",
+    "title": "바로메모 보드 관리",
+    "description": "팀 보드의 토큰·팀·구성원 관리와 감사 기록",
+    "open": { "label": "관리자", "href": "/memo/admin/" },
+    "links": [
+      { "label": "보드 API", "href": "/memo/api/help" },
+      { "label": "파일 저장소", "href": "/files/api/help" }
+    ]
+  }
+}
